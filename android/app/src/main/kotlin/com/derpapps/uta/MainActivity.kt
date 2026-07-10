@@ -1,4 +1,4 @@
-package com.example.uta
+package com.derpapps.uta
 
 import io.flutter.embedding.android.FlutterActivity
 
