@@ -62,7 +62,6 @@ jobs:
           flutter-version: "3.44.6"
           channel: "stable"
           cache: true
-          
 
       - name: Flutter pub get
         run: flutter pub get
@@ -81,14 +80,11 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :NSLocationWhenInUseUsageDescription string UTA uses your location to show your live position, detect route checkpoints, and recalculate travel ETAs while you are using the app." "$PLIST"
           fi
 
-      - name: Resolve iOS Swift packages
+      - name: Prepare Flutter iOS build
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild \
-            -resolvePackageDependencies \
-            -project ios/Runner.xcodeproj \
-            -scheme Runner
+          flutter build ios --release --no-codesign
 
       - name: Decode signing assets and install keychain
         shell: bash
@@ -154,7 +150,7 @@ jobs:
           set -euo pipefail
 
           xcodebuild \
-            -project ios/Runner.xcodeproj \
+            -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
             -destination 'generic/platform=iOS' \
