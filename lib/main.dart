@@ -62,6 +62,7 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
   final CheckpointProximityService checkpointProximityService =
       const CheckpointProximityService();
   StreamSubscription<LocationServiceSnapshot>? locationSubscription;
+  bool _locationRequestInFlight = false;
 
   late Trip trip = tripRepository.activeTrip;
   late TripLeg activeLeg = tripRepository.activeLeg;
@@ -131,13 +132,25 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
     setState(() {
       final now = DateTime.now();
       departureTime = now;
-      targetArrivalTime = now.add(const Duration(hours: 9, minutes: 15));
+      targetArrivalTime = now.add(_estimatedRouteDuration(activeLegTripView));
       completedTime = null;
       tripState = TripState.active;
       tripRepository.updateActiveState(TripState.active);
       statuses = _freshStatusesForActiveLeg();
       manualEvents = const [];
     });
+  }
+
+
+  Duration _estimatedRouteDuration(Trip routeTrip) {
+    if (routeTrip.route.isEmpty) return const Duration(hours: 1);
+    final minutes = routeTrip.route.fold<double>(
+      0,
+      (sum, segment) =>
+          sum + (segment.distanceMiles / segment.speedLimitMph.clamp(15, 80)) * 60,
+    );
+    final safeMinutes = minutes.round().clamp(1, 10080).toInt();
+    return Duration(minutes: safeMinutes);
   }
 
   void _endJourney() {
@@ -238,15 +251,34 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
 
 
   Future<void> _requestLocationPermission() async {
-    final snapshot = await locationService.requestCurrentLocation();
-    if (!mounted) return;
+    if (_locationRequestInFlight) return;
+    _locationRequestInFlight = true;
+    try {
+      final snapshot = await locationService.requestCurrentLocation();
+      if (!mounted) return;
 
-    setState(() {
-      _applyLocationSnapshot(snapshot);
-      trackingMode = snapshot.permissionStatus.canTrack
-          ? TrackingMode.assisted
-          : TrackingMode.manual;
-    });
+      setState(() {
+        _applyLocationSnapshot(snapshot);
+        trackingMode = snapshot.permissionStatus.canTrack
+            ? TrackingMode.assisted
+            : TrackingMode.manual;
+      });
+    } finally {
+      _locationRequestInFlight = false;
+    }
+  }
+
+  Future<TrackedLocation?> _captureCurrentLocation() async {
+    await _requestLocationPermission();
+    return lastLocation;
+  }
+
+  Future<void> _openAppSettings() async {
+    await locationService.openAppSettings();
+  }
+
+  Future<void> _openLocationSettings() async {
+    await locationService.openLocationSettings();
   }
 
   void _startGpsTracking() {
@@ -349,6 +381,7 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       MaterialPageRoute<void>(
         builder: (routeContext) => TripWizardScreen(
           currentTrip: trip,
+          onUseCurrentLocation: _captureCurrentLocation,
           onTripCreated: (newTrip) {
             _setCurrentTrip(newTrip);
             Navigator.of(routeContext).pop();
@@ -440,6 +473,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onRequestLocation: _requestLocationPermission,
         onStartTracking: _startGpsTracking,
         onStopTracking: _stopGpsTracking,
+        onOpenAppSettings: _openAppSettings,
+        onOpenLocationSettings: _openLocationSettings,
       ),
       TripToolsScreen(
         onOpenRoute: () => _openScreen(routeScreen),
@@ -457,7 +492,14 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       body: IndexedStack(index: _selectedIndex, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+        onDestinationSelected: (index) {
+          setState(() => _selectedIndex = index);
+          if (index == 2 &&
+              locationPermissionStatus ==
+                  LocationPermissionStatus.notRequested) {
+            _requestLocationPermission();
+          }
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),

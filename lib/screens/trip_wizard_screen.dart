@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../models/tracked_location.dart';
 import '../models/trip.dart';
 import '../models/trip_type.dart';
+import '../services/osm_routing_service.dart';
 import '../services/trip_factory_service.dart';
 import '../theme/uta_theme.dart';
 import '../widgets/uta_card.dart';
@@ -11,10 +13,12 @@ class TripWizardScreen extends StatefulWidget {
     super.key,
     required this.currentTrip,
     required this.onTripCreated,
+    required this.onUseCurrentLocation,
   });
 
   final Trip currentTrip;
   final ValueChanged<Trip> onTripCreated;
+  final Future<TrackedLocation?> Function() onUseCurrentLocation;
 
   @override
   State<TripWizardScreen> createState() => _TripWizardScreenState();
@@ -31,6 +35,8 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
   late final TextEditingController _bufferController;
 
   TripType _tripType = TripType.roadTrip;
+  bool _isCreating = false;
+  bool _isLocating = false;
 
   @override
   void initState() {
@@ -99,7 +105,7 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Start with the journey basics. Route, reservations, fuel and documents can be added afterward.',
+            'UTA will find both places, build a real driving route and prepare live GPS tracking.',
             style: TextStyle(color: UtaColors.muted, height: 1.4),
           ),
           const SizedBox(height: 18),
@@ -115,7 +121,24 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
                     prefixIcon: Icon(Icons.trip_origin_rounded),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: _isLocating ? null : _useCurrentLocation,
+                    icon: _isLocating
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.my_location_rounded),
+                    label: Text(
+                      _isLocating ? 'Finding your location…' : 'Use my current location',
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
                 TextField(
                   controller: _destinationController,
                   textInputAction: TextInputAction.next,
@@ -136,7 +159,7 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
                   controller: _nameController,
                   decoration: const InputDecoration(
                     labelText: 'Trip name',
-                    hintText: 'Example: Scotland Golf Trip',
+                    hintText: 'Optional — UTA can name it for you',
                     prefixIcon: Icon(Icons.luggage_rounded),
                   ),
                 ),
@@ -228,14 +251,46 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: _saveTrip,
-              icon: const Icon(Icons.check_rounded),
-              label: const Text('Create trip'),
+              onPressed: _isCreating ? null : _saveTrip,
+              icon: _isCreating
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.route_rounded),
+              label: Text(_isCreating ? 'Building route…' : 'Create trip and route'),
             ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Route creation requires an internet connection. Directions use OpenStreetMap and OSRM data.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: UtaColors.muted, fontSize: 12),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _useCurrentLocation() async {
+    setState(() => _isLocating = true);
+    try {
+      final location = await widget.onUseCurrentLocation();
+      if (!mounted) return;
+      if (location == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('UTA could not access your location. Check Location Services and permission settings.'),
+          ),
+        );
+        return;
+      }
+      _originController.text =
+          '${location.latitude.toStringAsFixed(6)}, ${location.longitude.toStringAsFixed(6)}';
+    } finally {
+      if (mounted) setState(() => _isLocating = false);
+    }
   }
 
   Future<void> _pickDate(TextEditingController controller) async {
@@ -259,7 +314,7 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
     controller.text = time.format(context);
   }
 
-  void _saveTrip() {
+  Future<void> _saveTrip() async {
     final origin = _originController.text.trim();
     final destination = _destinationController.text.trim();
     if (origin.isEmpty || destination.isEmpty) {
@@ -269,17 +324,33 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
       return;
     }
 
-    final trip = const TripFactoryService().buildTrip(
-      name: _nameController.text,
-      origin: origin,
-      destination: destination,
-      tripType: _tripType,
-      startDateLabel: _startDateController.text,
-      endDateLabel: _endDateController.text,
-      departureLabel: _departureController.text,
-      targetArrivalLabel: _targetArrivalController.text,
-      arrivalBufferMinutes: int.tryParse(_bufferController.text.trim()) ?? 30,
-    );
-    widget.onTripCreated(trip);
+    setState(() => _isCreating = true);
+    try {
+      final trip = await const TripFactoryService().buildTripWithRoute(
+        name: _nameController.text,
+        origin: origin,
+        destination: destination,
+        tripType: _tripType,
+        startDateLabel: _startDateController.text,
+        endDateLabel: _endDateController.text,
+        departureLabel: _departureController.text,
+        targetArrivalLabel: _targetArrivalController.text,
+        arrivalBufferMinutes: int.tryParse(_bufferController.text.trim()) ?? 30,
+      );
+      if (!mounted) return;
+      widget.onTripCreated(trip);
+    } on OsmRoutingException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message)),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('UTA could not create the route: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _isCreating = false);
+    }
   }
 }

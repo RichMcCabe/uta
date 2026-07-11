@@ -24,8 +24,8 @@ class LocationService {
   const LocationService();
 
   static const LocationSettings _trackingSettings = LocationSettings(
-    accuracy: LocationAccuracy.best,
-    distanceFilter: 25,
+    accuracy: LocationAccuracy.bestForNavigation,
+    distanceFilter: 10,
   );
 
   LocationServiceSnapshot initialSnapshot() {
@@ -33,58 +33,74 @@ class LocationService {
       permissionStatus: LocationPermissionStatus.notRequested,
       trackingState: GpsTrackingState.off,
       lastLocation: null,
-      message: 'GPS is ready to request device permission when you start tracking.',
+      message: 'UTA is ready to request location access.',
     );
   }
 
   Future<LocationServiceSnapshot> requestCurrentLocation() async {
-    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return const LocationServiceSnapshot(
-        permissionStatus: LocationPermissionStatus.disabled,
-        trackingState: GpsTrackingState.unavailable,
-        lastLocation: null,
-        message: 'Location services are turned off on this device.',
-      );
-    }
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        return const LocationServiceSnapshot(
+          permissionStatus: LocationPermissionStatus.disabled,
+          trackingState: GpsTrackingState.unavailable,
+          lastLocation: null,
+          message:
+              'Location Services are off. Turn them on in Settings to use live travel mode.',
+        );
+      }
 
-    final permissionStatus = await _requestPermissionStatus();
-    if (!permissionStatus.canTrack) {
+      final permissionStatus = await _requestPermissionStatus();
+      if (!permissionStatus.canTrack) {
+        return LocationServiceSnapshot(
+          permissionStatus: permissionStatus,
+          trackingState: GpsTrackingState.unavailable,
+          lastLocation: null,
+          message:
+              'Location access was not granted. Open Settings to allow UTA location access.',
+        );
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+
       return LocationServiceSnapshot(
         permissionStatus: permissionStatus,
+        trackingState: GpsTrackingState.ready,
+        lastLocation: _trackedLocationFromPosition(position),
+        message: 'Location ready. Start tracking for live speed, route progress and ETA.',
+      );
+    } on TimeoutException {
+      return const LocationServiceSnapshot(
+        permissionStatus: LocationPermissionStatus.unknown,
         trackingState: GpsTrackingState.unavailable,
         lastLocation: null,
-        message: 'Location permission was not granted. UTA can still use manual checkpoints.',
+        message: 'UTA could not obtain a GPS fix. Move outdoors and try again.',
+      );
+    } catch (error) {
+      return LocationServiceSnapshot(
+        permissionStatus: LocationPermissionStatus.unknown,
+        trackingState: GpsTrackingState.unavailable,
+        lastLocation: null,
+        message: 'Location error: $error',
       );
     }
-
-    final position = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.best,
-        timeLimit: Duration(seconds: 12),
-      ),
-    );
-
-    return LocationServiceSnapshot(
-      permissionStatus: permissionStatus,
-      trackingState: GpsTrackingState.ready,
-      lastLocation: _trackedLocationFromPosition(position),
-      message: 'Current location captured. Start live tracking when the active leg begins.',
-    );
   }
 
   Stream<LocationServiceSnapshot> trackingSnapshots() async* {
     final readySnapshot = await requestCurrentLocation();
-    if (!readySnapshot.permissionStatus.canTrack) {
-      yield readySnapshot;
-      return;
-    }
+    yield readySnapshot;
+    if (!readySnapshot.permissionStatus.canTrack) return;
 
     yield LocationServiceSnapshot(
       permissionStatus: readySnapshot.permissionStatus,
       trackingState: GpsTrackingState.active,
       lastLocation: readySnapshot.lastLocation,
-      message: 'Live GPS tracking is active for the current leg.',
+      message: 'Live GPS tracking is active.',
     );
 
     await for (final position in Geolocator.getPositionStream(
@@ -94,15 +110,23 @@ class LocationService {
         permissionStatus: readySnapshot.permissionStatus,
         trackingState: GpsTrackingState.active,
         lastLocation: _trackedLocationFromPosition(position),
-        message: 'Live GPS update received. UTA will auto-log nearby checkpoints.',
+        message: 'Live GPS update received.',
       );
     }
   }
+
+  Future<bool> openAppSettings() => Geolocator.openAppSettings();
+
+  Future<bool> openLocationSettings() => Geolocator.openLocationSettings();
 
   Future<LocationPermissionStatus> _requestPermissionStatus() async {
     final currentPermission = await Geolocator.checkPermission();
     if (_isUsablePermission(currentPermission)) {
       return _mapPermission(currentPermission);
+    }
+
+    if (currentPermission == LocationPermission.deniedForever) {
+      return LocationPermissionStatus.denied;
     }
 
     final requestedPermission = await Geolocator.requestPermission();
@@ -140,7 +164,9 @@ class LocationService {
       capturedAt: position.timestamp,
       accuracyMeters: position.accuracy,
       speedMph: speedMph,
-      headingDegrees: position.heading.isFinite ? position.heading : null,
+      headingDegrees: position.heading.isFinite && position.heading >= 0
+          ? position.heading
+          : null,
     );
   }
 }
