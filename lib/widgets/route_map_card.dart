@@ -12,10 +12,14 @@ class RouteMapCard extends StatelessWidget {
     super.key,
     required this.trip,
     required this.lastLocation,
+    this.activeSegmentIndex = 0,
+    this.followLocation = false,
   });
 
   final Trip trip;
   final TrackedLocation? lastLocation;
+  final int activeSegmentIndex;
+  final bool followLocation;
 
   @override
   Widget build(BuildContext context) {
@@ -31,48 +35,38 @@ class RouteMapCard extends StatelessWidget {
         (routePoints.isNotEmpty
             ? routePoints.first
             : const LatLng(34.9249, -80.7434));
+    final completedPoints = routePoints.isEmpty
+        ? const <LatLng>[]
+        : routePoints.take((activeSegmentIndex + 1).clamp(1, routePoints.length).toInt()).toList();
+
+    final locationKey = currentPoint == null
+        ? 'route-${routePoints.length}'
+        : '${currentPoint.latitude.toStringAsFixed(4)}-${currentPoint.longitude.toStringAsFixed(4)}-$followLocation';
 
     return UtaCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: SizedBox(
+          height: 330,
+          child: Stack(
             children: [
-              const Icon(Icons.map_rounded, color: UtaColors.gold),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Live route map',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-                ),
-              ),
-              Text('OSM', style: UtaText.label),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'OpenStreetMap tiles with current position and checkpoint markers.',
-            style: TextStyle(color: UtaColors.muted),
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: SizedBox(
-              height: 260,
-              child: FlutterMap(
+              FlutterMap(
+                key: ValueKey(locationKey),
                 options: MapOptions(
                   initialCenter: mapCenter,
-                  initialZoom: currentPoint == null ? 6.2 : 11,
+                  initialZoom: currentPoint == null ? 6.2 : (followLocation ? 13.5 : 11),
+                  initialRotation: followLocation ? -(lastLocation?.headingDegrees ?? 0) : 0,
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.drag |
                         InteractiveFlag.pinchZoom |
-                        InteractiveFlag.doubleTapZoom,
+                        InteractiveFlag.doubleTapZoom |
+                        InteractiveFlag.rotate,
                   ),
                 ),
                 children: [
                   TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                     userAgentPackageName: 'com.derpapps.uta',
                   ),
                   if (routePoints.length > 1)
@@ -80,46 +74,78 @@ class RouteMapCard extends StatelessWidget {
                       polylines: [
                         Polyline(
                           points: routePoints,
-                          strokeWidth: 4,
-                          color: UtaColors.sunset,
+                          strokeWidth: 7,
+                          color: UtaColors.night.withValues(alpha: 0.75),
                         ),
+                        Polyline(
+                          points: routePoints,
+                          strokeWidth: 4,
+                          color: UtaColors.gold,
+                        ),
+                        if (completedPoints.length > 1)
+                          Polyline(
+                            points: completedPoints,
+                            strokeWidth: 4,
+                            color: UtaColors.sky,
+                          ),
                       ],
                     ),
                   MarkerLayer(
                     markers: [
-                      for (final point in routePoints)
+                      if (routePoints.isNotEmpty)
                         Marker(
-                          point: point,
-                          width: 34,
-                          height: 34,
-                          child: const _CheckpointMarker(),
+                          point: routePoints.last,
+                          width: 42,
+                          height: 42,
+                          child: const _DestinationMarker(),
                         ),
                       if (currentPoint != null)
                         Marker(
                           point: currentPoint,
-                          width: 46,
-                          height: 46,
-                          child: const _CurrentLocationMarker(),
+                          width: 54,
+                          height: 54,
+                          child: Transform.rotate(
+                            angle: ((lastLocation?.headingDegrees ?? 0) * 3.141592653589793) / 180,
+                            child: const _CurrentLocationMarker(),
+                          ),
                         ),
                     ],
                   ),
                   const RichAttributionWidget(
-                    attributions: [
-                      TextSourceAttribution('OpenStreetMap contributors'),
-                    ],
+                    attributions: [TextSourceAttribution('OpenStreetMap contributors')],
                   ),
                 ],
               ),
-            ),
+              Positioned(
+                left: 14,
+                top: 14,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: UtaColors.night.withValues(alpha: 0.88),
+                    borderRadius: BorderRadius.circular(99),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(followLocation ? Icons.navigation_rounded : Icons.map_rounded, color: UtaColors.gold, size: 16),
+                      const SizedBox(width: 6),
+                      Text(followLocation ? 'FOLLOWING' : 'ROUTE OVERVIEW', style: UtaText.label),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _CheckpointMarker extends StatelessWidget {
-  const _CheckpointMarker();
+class _DestinationMarker extends StatelessWidget {
+  const _DestinationMarker();
 
   @override
   Widget build(BuildContext context) {
@@ -128,18 +154,9 @@ class _CheckpointMarker extends StatelessWidget {
         color: UtaColors.gold,
         shape: BoxShape.circle,
         border: Border.all(color: UtaColors.night, width: 3),
-        boxShadow: const [
-          BoxShadow(
-            blurRadius: 10,
-            color: Colors.black45,
-          ),
-        ],
+        boxShadow: const [BoxShadow(blurRadius: 12, color: Colors.black54)],
       ),
-      child: const Icon(
-        Icons.flag_rounded,
-        size: 16,
-        color: UtaColors.night,
-      ),
+      child: const Icon(Icons.flag_rounded, size: 20, color: UtaColors.night),
     );
   }
 }
@@ -151,19 +168,12 @@ class _CurrentLocationMarker extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: UtaColors.passport.withValues(alpha: 0.25),
+        color: UtaColors.sky.withValues(alpha: 0.20),
         shape: BoxShape.circle,
-        border: Border.all(color: UtaColors.sky, width: 2),
+        border: Border.all(color: UtaColors.sky.withValues(alpha: 0.55), width: 2),
       ),
-      child: Center(
-        child: Container(
-          width: 18,
-          height: 18,
-          decoration: const BoxDecoration(
-            color: UtaColors.sky,
-            shape: BoxShape.circle,
-          ),
-        ),
+      child: const Center(
+        child: Icon(Icons.navigation_rounded, color: UtaColors.sky, size: 30),
       ),
     );
   }

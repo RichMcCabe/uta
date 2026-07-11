@@ -1,12 +1,45 @@
+import 'dart:async';
+
 import '../data/default_trip_data.dart';
 import '../models/saved_trip_record.dart';
 import '../models/trip.dart';
 import '../models/trip_leg.dart';
 import '../models/trip_state.dart';
 import 'leg_builder_service.dart';
+import 'trip_storage_service.dart';
 
 class TripRepository {
-  TripRepository.seeded() {
+  TripRepository._(this._storageService);
+
+  final TripStorageService _storageService;
+
+  static Future<TripRepository> load({
+    TripStorageService storageService = const TripStorageService(),
+  }) async {
+    final repository = TripRepository._(storageService);
+    final stored = await storageService.loadTrips();
+    if (stored == null) {
+      repository._seed();
+    } else {
+      repository._records = stored.records;
+      final validTripId = stored.activeTripId != null &&
+          stored.records.any((record) => record.id == stored.activeTripId);
+      repository._activeTripId = validTripId
+          ? stored.activeTripId!
+          : stored.records.first.id;
+      final active = repository._records.firstWhere(
+        (record) => record.id == repository._activeTripId,
+      );
+      final validLegId = stored.activeLegId != null &&
+          active.legs.any((leg) => leg.id == stored.activeLegId);
+      repository._activeLegId = validLegId
+          ? stored.activeLegId!
+          : (active.legs.isEmpty ? '' : active.legs.first.id);
+    }
+    return repository;
+  }
+
+  void _seed() {
     final now = DateTime.now();
     final seedTrip = DefaultTripData.trip;
     final seedLeg = const LegBuilderService().buildCurrentTripLeg(seedTrip);
@@ -71,6 +104,7 @@ class TripRepository {
     ];
     _activeTripId = id;
     _activeLegId = leg.id;
+    _persist();
   }
 
   void upsertTrip(Trip trip) {
@@ -94,6 +128,7 @@ class TripRepository {
       ];
       _activeTripId = id;
       _activeLegId = leg.id;
+      _persist();
       return;
     }
 
@@ -115,6 +150,7 @@ class TripRepository {
           _records[i].copyWith(isActive: false),
     ];
     _activeLegId = leg.id;
+    _persist();
   }
 
   void saveActiveLeg(TripLeg leg) {
@@ -134,6 +170,7 @@ class TripRepository {
         else
           record,
     ];
+    _persist();
   }
 
   void addLeg(TripLeg leg) {
@@ -150,6 +187,7 @@ class TripRepository {
         else
           record,
     ];
+    _persist();
   }
 
   void cloneLeg(String legId) {
@@ -183,6 +221,7 @@ class TripRepository {
         else
           record,
     ];
+    _persist();
   }
 
   void selectLeg(String legId) {
@@ -203,6 +242,7 @@ class TripRepository {
         else
           record,
     ];
+    _persist();
   }
 
   void cloneActiveTrip() {
@@ -231,6 +271,7 @@ class TripRepository {
     _activeLegId = clonedLegs.isEmpty
         ? const LegBuilderService().buildCurrentTripLeg(clonedTrip).id
         : clonedLegs.first.id;
+    _persist();
   }
 
   void selectTrip(String id) {
@@ -251,6 +292,7 @@ class TripRepository {
           ],
         ),
     ];
+    _persist();
   }
 
   void updateActiveState(TripState state) {
@@ -262,6 +304,15 @@ class TripRepository {
         else
           record,
     ];
+    _persist();
+  }
+
+  void _persist() {
+    unawaited(_storageService.saveTrips(
+      records: _records,
+      activeTripId: _activeTripId,
+      activeLegId: _activeLegId,
+    ));
   }
 
   String _makeId(String name) {

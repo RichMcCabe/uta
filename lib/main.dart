@@ -27,15 +27,23 @@ import 'screens/trips_screen.dart';
 import 'services/checkpoint_proximity_service.dart';
 import 'services/event_detector.dart';
 import 'services/location_service.dart';
+import 'services/osm_routing_service.dart';
 import 'services/trip_repository.dart';
 import 'theme/uta_theme.dart';
 
-void main() {
-  runApp(const UtaApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final tripRepository = await TripRepository.load();
+  runApp(UtaApp(tripRepository: tripRepository));
 }
 
 class UtaApp extends StatelessWidget {
-  const UtaApp({super.key});
+  const UtaApp({
+    required this.tripRepository,
+    super.key,
+  });
+
+  final TripRepository tripRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -43,13 +51,18 @@ class UtaApp extends StatelessWidget {
       title: 'Ultimate Travel App',
       debugShowCheckedModeBanner: false,
       theme: UtaTheme.darkTheme,
-      home: const UtaHomeShell(),
+      home: UtaHomeShell(tripRepository: tripRepository),
     );
   }
 }
 
 class UtaHomeShell extends StatefulWidget {
-  const UtaHomeShell({super.key});
+  const UtaHomeShell({
+    required this.tripRepository,
+    super.key,
+  });
+
+  final TripRepository tripRepository;
 
   @override
   State<UtaHomeShell> createState() => _UtaHomeShellState();
@@ -57,7 +70,7 @@ class UtaHomeShell extends StatefulWidget {
 
 class _UtaHomeShellState extends State<UtaHomeShell> {
   int _selectedIndex = 0;
-  final TripRepository tripRepository = TripRepository.seeded();
+  late final TripRepository tripRepository = widget.tripRepository;
   final LocationService locationService = const LocationService();
   final CheckpointProximityService checkpointProximityService =
       const CheckpointProximityService();
@@ -246,6 +259,56 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       statuses = _freshStatusesForActiveLeg();
       completedTime = null;
       manualEvents = const [];
+    });
+  }
+
+  Future<void> _rerouteFromCurrentLocation(TrackedLocation location) async {
+    final destinationSegment = activeLeg.segments.lastWhere(
+      (segment) => segment.hasCheckpointLocation,
+      orElse: () => activeLeg.segments.last,
+    );
+    if (!destinationSegment.hasCheckpointLocation) {
+      throw const OsmRoutingException(
+        'The saved route does not contain destination coordinates.',
+      );
+    }
+
+    final driverName = activeLeg.segments.isEmpty
+        ? 'Rich'
+        : activeLeg.segments.first.assignedDriverName;
+    final plan = await const OsmRoutingService().buildDrivingRoute(
+      origin: GeocodedPlace(
+        displayName: 'Current location',
+        latitude: location.latitude,
+        longitude: location.longitude,
+        typeLabel: 'GPS position',
+      ),
+      destination: GeocodedPlace(
+        displayName: activeLeg.endLabel,
+        latitude: destinationSegment.checkpointLatitude!,
+        longitude: destinationSegment.checkpointLongitude!,
+        typeLabel: 'Destination',
+      ),
+      assignedDriverName: driverName,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      activeLeg = activeLeg.copyWith(
+        startLabel: 'Current location',
+        segments: plan.segments,
+        note: 'Automatically rerouted from live GPS position.',
+      );
+      tripRepository.saveActiveLeg(activeLeg);
+      trip = trip.copyWith(
+        origin: 'Current location',
+        route: plan.segments,
+        currentEtaLabel: plan.duration.inMinutes < 60
+            ? '${plan.duration.inMinutes} min'
+            : '${plan.duration.inHours}h ${plan.duration.inMinutes.remainder(60)}m',
+      );
+      statuses = _freshStatusesForActiveLeg();
+      targetArrivalTime = DateTime.now().add(plan.duration);
     });
   }
 
@@ -448,6 +511,9 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         trackingMode: trackingMode,
         manualEvents: manualEvents,
         completedTime: completedTime,
+        locationPermissionStatus: locationPermissionStatus,
+        gpsTrackingState: gpsTrackingState,
+        lastLocation: lastLocation,
         onStartTrip: _startTripNow,
         onEndTrip: _endJourney,
         onPlanTrip: _openTripWizard,
@@ -466,6 +532,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       ),
       GpsScreen(
         trip: legTrip,
+        tripState: tripState,
+        departureTime: departureTime,
         permissionStatus: locationPermissionStatus,
         trackingState: gpsTrackingState,
         lastLocation: lastLocation,
@@ -473,6 +541,9 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onRequestLocation: _requestLocationPermission,
         onStartTracking: _startGpsTracking,
         onStopTracking: _stopGpsTracking,
+        onStartJourney: _startTripNow,
+        onEndJourney: _endJourney,
+        onReroute: _rerouteFromCurrentLocation,
         onOpenAppSettings: _openAppSettings,
         onOpenLocationSettings: _openLocationSettings,
       ),

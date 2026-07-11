@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 
+import '../models/gps_tracking_state.dart';
 import '../models/journey_event.dart';
+import '../models/location_permission_status.dart';
+import '../models/profile.dart';
 import '../models/route_checkpoint_status.dart';
+import '../models/tracked_location.dart';
 import '../models/trip.dart';
 import '../models/trip_state.dart';
+import '../services/driver_eligibility_service.dart';
 import '../services/event_detector.dart';
 import '../services/trip_progress_service.dart';
 import '../theme/uta_theme.dart';
-import '../widgets/progress_status_badge.dart';
-import '../widgets/status_tile.dart';
 import '../widgets/uta_card.dart';
 import '../widgets/uta_logo.dart';
 
@@ -23,6 +26,9 @@ class MissionControlScreen extends StatelessWidget {
     required this.trackingMode,
     required this.manualEvents,
     required this.completedTime,
+    required this.locationPermissionStatus,
+    required this.gpsTrackingState,
+    required this.lastLocation,
     required this.onStartTrip,
     required this.onEndTrip,
     required this.onPlanTrip,
@@ -39,6 +45,9 @@ class MissionControlScreen extends StatelessWidget {
   final TrackingMode trackingMode;
   final List<JourneyEvent> manualEvents;
   final DateTime? completedTime;
+  final LocationPermissionStatus locationPermissionStatus;
+  final GpsTrackingState gpsTrackingState;
+  final TrackedLocation? lastLocation;
   final VoidCallback onStartTrip;
   final VoidCallback onEndTrip;
   final VoidCallback onPlanTrip;
@@ -63,21 +72,22 @@ class MissionControlScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
-          children: [
-            if (!_hasJourney) _buildWelcome(context) else _buildJourney(context),
-            const SizedBox(height: 18),
-            Text('Quick access', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            _QuickAccessGrid(
-              onOpenTrips: onOpenTrips,
-              onOpenGps: onOpenGps,
-              onOpenTools: onOpenTools,
-              onPlanTrip: onPlanTrip,
-            ),
-          ],
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF071629), UtaColors.night],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 30),
+            children: [
+              if (!_hasJourney) _buildWelcome(context) else _buildJourney(context),
+            ],
+          ),
         ),
       ),
     );
@@ -88,34 +98,33 @@ class MissionControlScreen extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 18),
-        Text(
-          'Where are you going?',
-          style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                fontWeight: FontWeight.w900,
-                height: 1.05,
-              ),
-        ),
-        const SizedBox(height: 10),
+        Text('Your journey starts here.', style: UtaText.hero),
+        const SizedBox(height: 12),
         const Text(
-          'Create a trip with a start and destination. UTA will build the journey workspace around it.',
-          style: TextStyle(color: UtaColors.muted, fontSize: 17, height: 1.4),
+          'Build a route, save the trip, and let UTA turn it into a live mission plan.',
+          style: TextStyle(color: UtaColors.muted, fontSize: 16, height: 1.45),
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 24),
         UtaCard(
           highlight: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.travel_explore_rounded, size: 42, color: UtaColors.gold),
-              const SizedBox(height: 18),
-              const Text(
-                'Plan your first journey',
-                style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900),
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: UtaColors.gold.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(Icons.travel_explore_rounded, color: UtaColors.gold, size: 30),
               ),
+              const SizedBox(height: 18),
+              const Text('Plan your first journey', style: UtaText.title),
               const SizedBox(height: 8),
               const Text(
-                'Choose any start and destination in the world. Dates, route, reservations and live GPS can be added as you need them.',
-                style: TextStyle(color: UtaColors.muted, height: 1.4),
+                'Choose a start and destination, preview the route, then save it to Mission Control.',
+                style: TextStyle(color: UtaColors.muted, height: 1.45),
               ),
               const SizedBox(height: 20),
               SizedBox(
@@ -140,25 +149,27 @@ class MissionControlScreen extends StatelessWidget {
       departureTime: departureTime,
       targetArrivalTime: targetArrivalTime,
     );
-    final nextPlan = trip.reservations.isEmpty ? null : trip.reservations.first;
+    final totalMiles = trip.route.fold<double>(0, (sum, segment) => sum + segment.distanceMiles);
+    final completedMiles = _completedMiles();
+    final remainingMiles = (totalMiles - completedMiles).clamp(0, double.infinity);
+    final progressPercent = (snapshot.progress * 100).round();
+    final currentDriver = _currentDriverName();
+    final driverProfile = _driverProfile(currentDriver);
+    final restriction = driverProfile == null
+        ? 'Driver profile unavailable'
+        : const DriverEligibilityService().eligibilitySummary(
+            driverProfile,
+            trip.sunriseLabel,
+            trip.sunsetLabel,
+          );
+    final nextStop = trip.stops.isEmpty ? null : trip.stops.first;
+    final fuelCost = trip.fuelEntries.fold<double>(0, (sum, entry) => sum + entry.totalCost);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 12),
-        Text(
-          trip.name,
-          style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                fontWeight: FontWeight.w900,
-                height: 1.05,
-              ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          '${trip.origin}  →  ${trip.destination}',
-          style: const TextStyle(color: UtaColors.muted, fontSize: 17),
-        ),
-        const SizedBox(height: 18),
+        _JourneyHeader(trip: trip, tripState: tripState),
+        const SizedBox(height: 16),
         UtaCard(
           highlight: true,
           child: Column(
@@ -166,86 +177,305 @@ class MissionControlScreen extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      tripState == TripState.active ? 'Journey in progress' : 'Ready when you are',
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
-                    ),
-                  ),
-                  Icon(
-                    tripState == TripState.active
-                        ? Icons.navigation_rounded
-                        : Icons.luggage_rounded,
-                    color: UtaColors.gold,
-                  ),
+                  const Expanded(child: Text('TRIP PROGRESS', style: UtaText.label)),
+                  Text('$progressPercent%', style: const TextStyle(color: UtaColors.gold, fontWeight: FontWeight.w900)),
                 ],
               ),
-              const SizedBox(height: 14),
-              ProgressStatusBadge(
-                label: snapshot.statusLabel,
-                detail: snapshot.statusDetail,
-                minutesAheadBehind: snapshot.minutesAheadBehind,
+              const SizedBox(height: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: LinearProgressIndicator(
+                  value: snapshot.progress.clamp(0, 1),
+                  minHeight: 10,
+                  backgroundColor: Colors.white.withValues(alpha: 0.08),
+                  valueColor: const AlwaysStoppedAnimation(UtaColors.gold),
+                ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 10),
               Row(
                 children: [
-                  Expanded(
-                    child: StatusTile(
-                      label: 'Departure',
-                      value: trip.departureLabel,
-                      icon: Icons.departure_board_rounded,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: StatusTile(
-                      label: 'Current ETA',
-                      value: snapshot.projectedArrivalLabel,
-                      icon: Icons.schedule_rounded,
-                      color: UtaColors.mint,
-                    ),
-                  ),
+                  Expanded(child: Text(snapshot.statusDetail, style: const TextStyle(color: UtaColors.muted))),
+                  Text('${remainingMiles.toStringAsFixed(0)} of ${totalMiles.toStringAsFixed(0)} mi left', style: const TextStyle(color: UtaColors.muted, fontSize: 12)),
                 ],
               ),
-              if (nextPlan != null) ...[
-                const SizedBox(height: 12),
-                StatusTile(
-                  label: 'Next plan',
-                  value: '${nextPlan.title} • ${nextPlan.timeLabel}',
-                  icon: Icons.event_available_rounded,
-                  color: UtaColors.gold,
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _MetricCard(
+                label: 'ETA',
+                value: snapshot.projectedArrivalLabel,
+                detail: snapshot.statusLabel,
+                icon: Icons.schedule_rounded,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _MetricCard(
+                label: 'DISTANCE',
+                value: '${remainingMiles.toStringAsFixed(0)} mi',
+                detail: '${snapshot.loggedCount}/${snapshot.totalCount} checkpoints',
+                icon: Icons.route_rounded,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _MetricCard(
+                label: 'DRIVER',
+                value: currentDriver,
+                detail: driverProfile?.canDrive == true ? 'Eligible' : 'Check profile',
+                icon: Icons.person_rounded,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        UtaCard(
+          onTap: onOpenGps,
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: UtaColors.gold.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(15),
                 ),
-              ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: tripState == TripState.active ? onEndTrip : onStartTrip,
-                  icon: Icon(
-                    tripState == TripState.active
-                        ? Icons.flag_rounded
-                        : Icons.play_arrow_rounded,
-                  ),
-                  label: Text(
-                    tripState == TripState.active ? 'End journey' : 'Start journey',
-                  ),
+                child: const Icon(Icons.turn_right_rounded, color: UtaColors.gold),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('NEXT', style: UtaText.label),
+                    const SizedBox(height: 4),
+                    Text(snapshot.nextCheckpointLabel, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                  ],
                 ),
               ),
+              const Icon(Icons.chevron_right_rounded, color: UtaColors.muted),
             ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _StatusCard(
+                label: 'DRIVING WINDOW',
+                value: restriction,
+                icon: Icons.verified_user_rounded,
+                color: driverProfile?.canDrive == false ? UtaColors.coral : UtaColors.mint,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _StatusCard(
+                label: 'GPS',
+                value: _gpsSummary(),
+                icon: Icons.gps_fixed_rounded,
+                color: gpsTrackingState == GpsTrackingState.active ? UtaColors.mint : UtaColors.sky,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _StatusCard(
+                label: 'FUEL',
+                value: trip.fuelEntries.isEmpty ? 'No fuel stops logged' : '\$${fuelCost.toStringAsFixed(2)} logged',
+                icon: Icons.local_gas_station_rounded,
+                color: UtaColors.gold,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _StatusCard(
+                label: 'WEATHER',
+                value: 'Provider not connected',
+                icon: Icons.cloud_outlined,
+                color: UtaColors.sky,
+              ),
+            ),
+          ],
+        ),
+        if (nextStop != null) ...[
+          const SizedBox(height: 12),
+          UtaCard(
+            child: Row(
+              children: [
+                const Icon(Icons.location_on_rounded, color: UtaColors.gold),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('NEXT STOP', style: UtaText.label),
+                      const SizedBox(height: 4),
+                      Text(nextStop.name, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 18),
+        Text('Quick actions', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        _QuickActions(
+          onOpenTrips: onOpenTrips,
+          onOpenGps: onOpenGps,
+          onOpenTools: onOpenTools,
+          onPlanTrip: onPlanTrip,
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: tripState == TripState.active ? onEndTrip : onStartTrip,
+            icon: Icon(tripState == TripState.active ? Icons.flag_rounded : Icons.navigation_rounded),
+            label: Text(tripState == TripState.active ? 'End journey' : 'Start journey'),
           ),
         ),
       ],
     );
   }
+
+  double _completedMiles() {
+    final loggedIds = statuses.where((status) => status.isLogged).map((status) => status.segmentId).toSet();
+    return trip.route.where((segment) => loggedIds.contains(segment.id)).fold<double>(0, (sum, segment) => sum + segment.distanceMiles);
+  }
+
+  String _currentDriverName() {
+    final loggedIds = statuses.where((status) => status.isLogged).map((status) => status.segmentId).toSet();
+    for (final segment in trip.route) {
+      if (!loggedIds.contains(segment.id) && segment.assignedDriverName.trim().isNotEmpty) {
+        return segment.assignedDriverName;
+      }
+    }
+    if (trip.profiles.isNotEmpty) return trip.profiles.first.name;
+    return 'Unassigned';
+  }
+
+  Profile? _driverProfile(String name) {
+    for (final profile in trip.profiles) {
+      if (profile.name == name) return profile;
+    }
+    return null;
+  }
+
+  String _gpsSummary() {
+    if (gpsTrackingState == GpsTrackingState.active && lastLocation != null) {
+      final speed = lastLocation!.speedMph;
+      return speed == null ? 'Live tracking active' : '${speed.toStringAsFixed(0)} mph live';
+    }
+    if (locationPermissionStatus.canTrack) return 'Ready to track';
+    if (locationPermissionStatus == LocationPermissionStatus.denied) return 'Permission denied';
+    if (locationPermissionStatus == LocationPermissionStatus.disabled) return 'Location disabled';
+    return 'Location not active';
+  }
 }
 
-class _QuickAccessGrid extends StatelessWidget {
-  const _QuickAccessGrid({
-    required this.onOpenTrips,
-    required this.onOpenGps,
-    required this.onOpenTools,
-    required this.onPlanTrip,
-  });
+class _JourneyHeader extends StatelessWidget {
+  const _JourneyHeader({required this.trip, required this.tripState});
+
+  final Trip trip;
+  final TripState tripState;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('CURRENT TRIP', style: UtaText.label.copyWith(color: UtaColors.gold)),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: UtaColors.mint.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: UtaColors.mint.withValues(alpha: 0.3)),
+              ),
+              child: Text(tripState.label.toUpperCase(), style: const TextStyle(color: UtaColors.mint, fontSize: 10, fontWeight: FontWeight.w900)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(trip.name, style: UtaText.hero),
+        const SizedBox(height: 10),
+        Text('${trip.origin}  →  ${trip.destination}', style: const TextStyle(color: UtaColors.muted, fontSize: 16, height: 1.35)),
+        const SizedBox(height: 6),
+        Text('${trip.startDateLabel} — ${trip.endDateLabel}', style: const TextStyle(color: UtaColors.muted, fontSize: 13)),
+      ],
+    );
+  }
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({required this.label, required this.value, required this.detail, required this.icon});
+
+  final String label;
+  final String value;
+  final String detail;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return UtaCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [Expanded(child: Text(label, style: UtaText.label)), Icon(icon, size: 16, color: UtaColors.gold)]),
+          const SizedBox(height: 10),
+          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900)),
+          const SizedBox(height: 4),
+          Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: UtaColors.muted, fontSize: 10)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusCard extends StatelessWidget {
+  const _StatusCard({required this.label, required this.value, required this.icon, required this.color});
+
+  final String label;
+  final String value;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return UtaCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 22),
+          const SizedBox(height: 10),
+          Text(label, style: UtaText.label),
+          const SizedBox(height: 5),
+          Text(value, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, height: 1.25)),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickActions extends StatelessWidget {
+  const _QuickActions({required this.onOpenTrips, required this.onOpenGps, required this.onOpenTools, required this.onPlanTrip});
 
   final VoidCallback onOpenTrips;
   final VoidCallback onOpenGps;
@@ -254,84 +484,49 @@ class _QuickAccessGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = [
-      _QuickAccessItem(
-        label: 'Trips',
-        detail: 'Saved journeys',
-        icon: Icons.luggage_rounded,
-        onTap: onOpenTrips,
-      ),
-      _QuickAccessItem(
-        label: 'GPS',
-        detail: 'Live location',
-        icon: Icons.gps_fixed_rounded,
-        onTap: onOpenGps,
-      ),
-      _QuickAccessItem(
-        label: 'Tools',
-        detail: 'Route, plans, fuel',
-        icon: Icons.dashboard_customize_rounded,
-        onTap: onOpenTools,
-      ),
-      _QuickAccessItem(
-        label: 'New trip',
-        detail: 'Start somewhere new',
-        icon: Icons.add_location_alt_rounded,
-        onTap: onPlanTrip,
-      ),
+    final actions = [
+      _ActionData('Trips', Icons.luggage_rounded, onOpenTrips),
+      _ActionData('Navigate', Icons.navigation_rounded, onOpenGps),
+      _ActionData('Tools', Icons.tune_rounded, onOpenTools),
+      _ActionData('New trip', Icons.add_location_alt_rounded, onPlanTrip),
     ];
-
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 1.35,
-      ),
-      itemCount: items.length,
-      itemBuilder: (context, index) => items[index],
+    return Row(
+      children: [
+        for (var i = 0; i < actions.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(child: _ActionButton(data: actions[i])),
+        ],
+      ],
     );
   }
 }
 
-class _QuickAccessItem extends StatelessWidget {
-  const _QuickAccessItem({
-    required this.label,
-    required this.detail,
-    required this.icon,
-    required this.onTap,
-  });
-
+class _ActionData {
+  const _ActionData(this.label, this.icon, this.onTap);
   final String label;
-  final String detail;
   final IconData icon;
   final VoidCallback onTap;
+}
+
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({required this.data});
+  final _ActionData data;
 
   @override
   Widget build(BuildContext context) {
     return Material(
       color: UtaColors.card,
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
+        onTap: data.onTap,
+        borderRadius: BorderRadius.circular(18),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 6),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(icon, color: UtaColors.sky),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
-                  const SizedBox(height: 2),
-                  Text(detail, style: const TextStyle(color: UtaColors.muted, fontSize: 12)),
-                ],
-              ),
+              Icon(data.icon, color: UtaColors.gold, size: 22),
+              const SizedBox(height: 7),
+              Text(data.label, maxLines: 1, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800)),
             ],
           ),
         ),

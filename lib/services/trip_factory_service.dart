@@ -11,8 +11,8 @@ class TripFactoryService {
 
   Future<Trip> buildTripWithRoute({
     required String name,
-    required String origin,
-    required String destination,
+    required GeocodedPlace origin,
+    required GeocodedPlace destination,
     required TripType tripType,
     required String startDateLabel,
     required String endDateLabel,
@@ -21,8 +21,8 @@ class TripFactoryService {
     required int arrivalBufferMinutes,
   }) async {
     final plan = await routingService.buildDrivingRoute(
-      originQuery: origin,
-      destinationQuery: destination,
+      origin: origin,
+      destination: destination,
     );
 
     final now = DateTime.now();
