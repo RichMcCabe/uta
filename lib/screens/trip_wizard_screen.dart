@@ -3,10 +3,8 @@ import 'package:flutter/material.dart';
 import '../models/trip.dart';
 import '../models/trip_type.dart';
 import '../services/trip_factory_service.dart';
-import '../widgets/section_header.dart';
-import '../widgets/trip_dashboard_card.dart';
+import '../theme/uta_theme.dart';
 import '../widgets/uta_card.dart';
-import '../widgets/warning_banner.dart';
 
 class TripWizardScreen extends StatefulWidget {
   const TripWizardScreen({
@@ -33,21 +31,44 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
   late final TextEditingController _bufferController;
 
   TripType _tripType = TripType.roadTrip;
-  Trip? _previewTrip;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.currentTrip.name);
-    _originController = TextEditingController(text: widget.currentTrip.origin);
-    _destinationController = TextEditingController(text: widget.currentTrip.destination);
-    _startDateController = TextEditingController(text: widget.currentTrip.startDateLabel == 'Not set' ? '' : widget.currentTrip.startDateLabel);
-    _endDateController = TextEditingController(text: widget.currentTrip.endDateLabel == 'Not set' ? '' : widget.currentTrip.endDateLabel);
-    _departureController = TextEditingController(text: widget.currentTrip.departureLabel);
-    _targetArrivalController = TextEditingController(text: widget.currentTrip.targetArrivalLabel);
-    _bufferController = TextEditingController(text: widget.currentTrip.arrivalBufferMinutes.toString());
+    final isStarter = widget.currentTrip.origin == 'Choose a start';
+    _nameController = TextEditingController(
+      text: isStarter ? '' : widget.currentTrip.name,
+    );
+    _originController = TextEditingController(
+      text: isStarter ? '' : widget.currentTrip.origin,
+    );
+    _destinationController = TextEditingController(
+      text: isStarter ? '' : widget.currentTrip.destination,
+    );
+    _startDateController = TextEditingController(
+      text: widget.currentTrip.startDateLabel == 'Not set'
+          ? ''
+          : widget.currentTrip.startDateLabel,
+    );
+    _endDateController = TextEditingController(
+      text: widget.currentTrip.endDateLabel == 'Not set'
+          ? ''
+          : widget.currentTrip.endDateLabel,
+    );
+    _departureController = TextEditingController(
+      text: widget.currentTrip.departureLabel == 'Not set'
+          ? ''
+          : widget.currentTrip.departureLabel,
+    );
+    _targetArrivalController = TextEditingController(
+      text: widget.currentTrip.targetArrivalLabel == 'Not set'
+          ? ''
+          : widget.currentTrip.targetArrivalLabel,
+    );
+    _bufferController = TextEditingController(
+      text: widget.currentTrip.arrivalBufferMinutes.toString(),
+    );
     _tripType = widget.currentTrip.tripType;
-    _previewTrip = widget.currentTrip;
   }
 
   @override
@@ -65,18 +86,49 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final preview = _previewTrip ?? widget.currentTrip;
-
     return Scaffold(
-      appBar: AppBar(title: const Text('New Trip')),
+      appBar: AppBar(title: const Text('Plan a trip')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
         children: [
-          const WarningBanner(
-            title: 'Trip creation v0.9',
-            message: 'This creates an in-memory trip for the current session. Storage comes next, but the app is no longer limited to the hardcoded Orlando labels.',
+          Text(
+            'Where are you going?',
+            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
           ),
-          const SectionHeader('Trip basics'),
+          const SizedBox(height: 8),
+          const Text(
+            'Start with the journey basics. Route, reservations, fuel and documents can be added afterward.',
+            style: TextStyle(color: UtaColors.muted, height: 1.4),
+          ),
+          const SizedBox(height: 18),
+          UtaCard(
+            child: Column(
+              children: [
+                TextField(
+                  controller: _originController,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Start location',
+                    hintText: 'City, address, hotel or landmark',
+                    prefixIcon: Icon(Icons.trip_origin_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _destinationController,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Destination',
+                    hintText: 'Anywhere in the world',
+                    prefixIcon: Icon(Icons.location_on_rounded),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
           UtaCard(
             child: Column(
               children: [
@@ -84,12 +136,11 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
                   controller: _nameController,
                   decoration: const InputDecoration(
                     labelText: 'Trip name',
-                    hintText: 'Example: Orlando Family Vacation',
-                    prefixIcon: Icon(Icons.card_travel_rounded),
+                    hintText: 'Example: Scotland Golf Trip',
+                    prefixIcon: Icon(Icons.luggage_rounded),
                   ),
-                  onChanged: (_) => _refreshPreview(),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 DropdownButtonFormField<TripType>(
                   initialValue: _tripType,
                   decoration: const InputDecoration(
@@ -103,130 +154,132 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
                   onChanged: (value) {
                     if (value == null) return;
                     setState(() => _tripType = value);
-                    _refreshPreview();
                   },
                 ),
-                const SizedBox(height: 10),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          UtaCard(
+            child: Column(
+              children: [
                 Row(
                   children: [
                     Expanded(
                       child: TextField(
                         controller: _startDateController,
-                        decoration: const InputDecoration(labelText: 'Start date'),
-                        onChanged: (_) => _refreshPreview(),
+                        readOnly: true,
+                        onTap: () => _pickDate(_startDateController),
+                        decoration: const InputDecoration(
+                          labelText: 'Start date',
+                          prefixIcon: Icon(Icons.calendar_today_rounded),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
                         controller: _endDateController,
+                        readOnly: true,
+                        onTap: () => _pickDate(_endDateController),
                         decoration: const InputDecoration(labelText: 'End date'),
-                        onChanged: (_) => _refreshPreview(),
                       ),
                     ),
                   ],
                 ),
-              ],
-            ),
-          ),
-          const SectionHeader('Journey target'),
-          UtaCard(
-            child: Column(
-              children: [
-                TextField(
-                  controller: _originController,
-                  decoration: const InputDecoration(
-                    labelText: 'Start location',
-                    hintText: 'Address, hotel, current location, or map pin later',
-                    prefixIcon: Icon(Icons.trip_origin_rounded),
-                  ),
-                  onChanged: (_) => _refreshPreview(),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _destinationController,
-                  decoration: const InputDecoration(
-                    labelText: 'Destination',
-                    hintText: 'Address, hotel, attraction, or map pin later',
-                    prefixIcon: Icon(Icons.location_on_rounded),
-                  ),
-                  onChanged: (_) => _refreshPreview(),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       child: TextField(
                         controller: _departureController,
-                        decoration: const InputDecoration(labelText: 'Departure'),
-                        onChanged: (_) => _refreshPreview(),
+                        readOnly: true,
+                        onTap: () => _pickTime(_departureController),
+                        decoration: const InputDecoration(
+                          labelText: 'Departure',
+                          prefixIcon: Icon(Icons.schedule_rounded),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: TextField(
                         controller: _targetArrivalController,
+                        readOnly: true,
+                        onTap: () => _pickTime(_targetArrivalController),
                         decoration: const InputDecoration(labelText: 'Target arrival'),
-                        onChanged: (_) => _refreshPreview(),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 TextField(
                   controller: _bufferController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'Desired arrival buffer minutes',
-                    helperText: 'Example: arrive 30 minutes before a reservation.',
+                    labelText: 'Arrival buffer (minutes)',
+                    prefixIcon: Icon(Icons.timer_outlined),
                   ),
-                  onChanged: (_) => _refreshPreview(),
                 ),
               ],
             ),
           ),
-          const SectionHeader('Preview'),
-          TripDashboardCard(trip: preview),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            onPressed: _saveTrip,
-            icon: const Icon(Icons.save_rounded),
-            label: const Text('Create / Update Current Trip'),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _saveTrip,
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('Create trip'),
+            ),
           ),
         ],
       ),
     );
   }
 
-  void _refreshPreview() {
-    setState(() {
-      _previewTrip = _buildTrip();
-    });
+  Future<void> _pickDate(TextEditingController controller) async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 10),
+      initialDate: now,
+    );
+    if (date == null) return;
+    controller.text = '${date.month}/${date.day}/${date.year}';
+  }
+
+  Future<void> _pickTime(TextEditingController controller) async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (time == null || !mounted) return;
+    controller.text = time.format(context);
   }
 
   void _saveTrip() {
-    final trip = _buildTrip();
-    widget.onTripCreated(trip);
-    setState(() => _previewTrip = trip);
+    final origin = _originController.text.trim();
+    final destination = _destinationController.text.trim();
+    if (origin.isEmpty || destination.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose both a start and destination.')),
+      );
+      return;
+    }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Current trip updated')),
-    );
-  }
-
-  Trip _buildTrip() {
-    final buffer = int.tryParse(_bufferController.text.trim()) ?? 30;
-
-    return const TripFactoryService().buildTrip(
+    final trip = const TripFactoryService().buildTrip(
       name: _nameController.text,
-      origin: _originController.text,
-      destination: _destinationController.text,
+      origin: origin,
+      destination: destination,
       tripType: _tripType,
       startDateLabel: _startDateController.text,
       endDateLabel: _endDateController.text,
       departureLabel: _departureController.text,
       targetArrivalLabel: _targetArrivalController.text,
-      arrivalBufferMinutes: buffer,
+      arrivalBufferMinutes: int.tryParse(_bufferController.text.trim()) ?? 30,
     );
+    widget.onTripCreated(trip);
   }
 }

@@ -127,7 +127,27 @@ class RouteTrackerScreen extends StatelessWidget {
               ],
             ),
           ),
-          const SectionHeader('Orlando route', subtitle: 'Tap checkpoints during the drive or catch up later at a safe stop.'),
+          SectionHeader(
+            trip.route.isEmpty ? 'No route yet' : 'Journey route',
+            subtitle: trip.route.isEmpty
+                ? 'Use Build route in Trip tools to add directions and checkpoints.'
+                : 'Tap checkpoints during the journey or catch up later at a safe stop.',
+          ),
+          if (trip.route.isEmpty)
+            const UtaCard(
+              child: Row(
+                children: [
+                  Icon(Icons.route_rounded, color: UtaColors.gold),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Your trip is saved, but a route has not been built yet.',
+                      style: TextStyle(color: UtaColors.muted, height: 1.35),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           for (var i = 0; i < trip.route.length; i++)
             CheckpointTile(
               segment: trip.route[i],

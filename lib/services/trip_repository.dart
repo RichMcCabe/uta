@@ -1,4 +1,4 @@
-import '../data/orlando_trip_data.dart';
+import '../data/default_trip_data.dart';
 import '../models/saved_trip_record.dart';
 import '../models/trip.dart';
 import '../models/trip_leg.dart';
@@ -8,12 +8,12 @@ import 'leg_builder_service.dart';
 class TripRepository {
   TripRepository.seeded() {
     final now = DateTime.now();
-    final seedTrip = OrlandoTripData.trip;
+    final seedTrip = DefaultTripData.trip;
     final seedLeg = const LegBuilderService().buildCurrentTripLeg(seedTrip);
 
     _records = [
       SavedTripRecord(
-        id: 'orlando-seed',
+        id: 'starter-trip',
         trip: seedTrip,
         legs: [seedLeg],
         state: TripState.ready,
@@ -22,7 +22,7 @@ class TripRepository {
         isActive: true,
       ),
     ];
-    _activeTripId = 'orlando-seed';
+    _activeTripId = 'starter-trip';
     _activeLegId = seedLeg.id;
   }
 
@@ -46,6 +46,31 @@ class TripRepository {
       (leg) => leg.id == _activeLegId,
       orElse: () => legs.first,
     );
+  }
+
+  void createTrip(Trip trip) {
+    final now = DateTime.now();
+    final leg = const LegBuilderService().buildCurrentTripLeg(trip);
+    final id = _makeId(trip.name);
+    final starterOnly = _records.length == 1 && _records.first.id == 'starter-trip';
+
+    final newRecord = SavedTripRecord(
+      id: id,
+      trip: trip,
+      legs: [leg],
+      state: TripState.ready,
+      createdAt: now,
+      updatedAt: now,
+      isActive: true,
+    );
+
+    _records = [
+      if (!starterOnly)
+        ..._records.map((record) => record.copyWith(isActive: false)),
+      newRecord,
+    ];
+    _activeTripId = id;
+    _activeLegId = leg.id;
   }
 
   void upsertTrip(Trip trip) {

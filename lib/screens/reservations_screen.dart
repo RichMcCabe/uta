@@ -16,8 +16,24 @@ class ReservationsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const SectionHeader('Reservations & itinerary', subtitle: 'Optional module. Enabled for Orlando v1.'),
-          for (final reservation in trip.reservations) ReservationCard(reservation: reservation),
+          SectionHeader(
+            'Reservations & itinerary',
+            subtitle: trip.reservations.isEmpty
+                ? 'No plans have been added to this trip yet.'
+                : 'Everything scheduled for ${trip.name}.',
+          ),
+          if (trip.reservations.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 28),
+              child: Center(
+                child: Text(
+                  'Add reservations after creating the trip.',
+                  style: TextStyle(color: Color(0xFFC8BDD6)),
+                ),
+              ),
+            ),
+          for (final reservation in trip.reservations)
+            ReservationCard(reservation: reservation),
         ],
       ),
     );

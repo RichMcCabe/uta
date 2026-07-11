@@ -9,13 +9,13 @@ class LegBuilderService {
 
   TripLeg buildCurrentTripLeg(Trip trip) {
     return TripLeg(
-      id: 'orlando-main-leg',
-      name: 'Home to Titanic Exhibition',
+      id: 'primary-leg',
+      name: '${trip.origin} to ${trip.destination}',
       startLabel: trip.origin,
       endLabel: trip.destination,
       inputMode: LegInputMode.manualDirections,
       segments: trip.route,
-      note: 'Uncle John mode: editable manual directions now; OSM routing can prefill later.',
+      note: 'Add directions manually or generate them from the route tools.',
       isActive: true,
     );
   }

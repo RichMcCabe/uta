@@ -21,6 +21,7 @@ import 'screens/profile_screen.dart';
 import 'screens/reservations_screen.dart';
 import 'screens/route_tracker_screen.dart';
 import 'screens/timeline_screen.dart';
+import 'screens/trip_tools_screen.dart';
 import 'screens/trip_wizard_screen.dart';
 import 'screens/trips_screen.dart';
 import 'services/checkpoint_proximity_service.dart';
@@ -73,8 +74,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
   TrackedLocation? lastLocation;
   String locationMessage = const LocationService().initialSnapshot().message;
 
-  late DateTime departureTime = DateTime(2026, 7, 17, 1, 45);
-  late DateTime targetArrivalTime = DateTime(2026, 7, 17, 11);
+  late DateTime departureTime = DateTime.now();
+  late DateTime targetArrivalTime = DateTime.now().add(const Duration(hours: 8));
   DateTime? completedTime;
 
   late List<RouteCheckpointStatus> statuses = _freshStatusesForActiveLeg();
@@ -121,7 +122,7 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
 
   void _setCurrentTrip(Trip newTrip) {
     setState(() {
-      tripRepository.upsertTrip(newTrip);
+      tripRepository.createTrip(newTrip);
       _syncFromRepository();
     });
   }
@@ -328,14 +329,35 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
     setState(() {
       tripState = TripState.ready;
       tripRepository.updateActiveState(TripState.ready);
-      departureTime = DateTime(2026, 7, 17, 1, 45);
-      targetArrivalTime = DateTime(2026, 7, 17, 11);
+      departureTime = DateTime.now();
+      targetArrivalTime = DateTime.now().add(const Duration(hours: 8));
       completedTime = null;
       statuses = _freshStatusesForActiveLeg();
       manualEvents = const [];
     });
   }
 
+
+  void _openScreen(Widget screen) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
+  }
+
+  void _openTripWizard() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (routeContext) => TripWizardScreen(
+          currentTrip: trip,
+          onTripCreated: (newTrip) {
+            _setCurrentTrip(newTrip);
+            Navigator.of(routeContext).pop();
+            setState(() => _selectedIndex = 0);
+          },
+        ),
+      ),
+    );
+  }
 
   @override
   void dispose() {
@@ -346,6 +368,42 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
   @override
   Widget build(BuildContext context) {
     final legTrip = activeLegTripView;
+
+    final routeScreen = RouteTrackerScreen(
+      trip: legTrip,
+      statuses: statuses,
+      departureTime: departureTime,
+      targetArrivalTime: targetArrivalTime,
+      tripState: tripState,
+      trackingMode: trackingMode,
+      onStartTrip: _startTripNow,
+      onEndTrip: _endJourney,
+      onLogCheckpoint: _logCheckpoint,
+      onClearCheckpoint: _clearCheckpoint,
+      onResetProgress: _resetProgress,
+    );
+    final timelineScreen = TimelineScreen(
+      trip: legTrip,
+      statuses: statuses,
+      departureTime: departureTime,
+      manualEvents: manualEvents,
+      completedTime: completedTime,
+      onAddQuickEvent: _addQuickEvent,
+    );
+    final legsScreen = LegsScreen(
+      trip: trip,
+      legs: tripRepository.activeTripLegs,
+      activeLeg: activeLeg,
+      onSelectLeg: _selectLeg,
+      onAddLeg: _addLeg,
+      onCloneLeg: _cloneLeg,
+      onDeleteLeg: _deleteLeg,
+    );
+    final legBuilderScreen = LegBuilderScreen(
+      trip: legTrip,
+      leg: activeLeg,
+      onSaveLeg: _saveLeg,
+    );
 
     final screens = [
       MissionControlScreen(
@@ -359,36 +417,19 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         completedTime: completedTime,
         onStartTrip: _startTripNow,
         onEndTrip: _endJourney,
+        onPlanTrip: _openTripWizard,
+        onOpenTrips: () => setState(() => _selectedIndex = 1),
+        onOpenGps: () => setState(() => _selectedIndex = 2),
+        onOpenTools: () => setState(() => _selectedIndex = 3),
       ),
       TripsScreen(
         records: tripRepository.records,
-        onSelectTrip: _selectTrip,
+        onSelectTrip: (id) {
+          _selectTrip(id);
+          setState(() => _selectedIndex = 0);
+        },
         onCloneActiveTrip: _cloneActiveTrip,
-      ),
-      TripWizardScreen(
-        currentTrip: trip,
-        onTripCreated: _setCurrentTrip,
-      ),
-      RouteTrackerScreen(
-        trip: legTrip,
-        statuses: statuses,
-        departureTime: departureTime,
-        targetArrivalTime: targetArrivalTime,
-        tripState: tripState,
-        trackingMode: trackingMode,
-        onStartTrip: _startTripNow,
-        onEndTrip: _endJourney,
-        onLogCheckpoint: _logCheckpoint,
-        onClearCheckpoint: _clearCheckpoint,
-        onResetProgress: _resetProgress,
-      ),
-      TimelineScreen(
-        trip: legTrip,
-        statuses: statuses,
-        departureTime: departureTime,
-        manualEvents: manualEvents,
-        completedTime: completedTime,
-        onAddQuickEvent: _addQuickEvent,
+        onCreateTrip: _openTripWizard,
       ),
       GpsScreen(
         trip: legTrip,
@@ -400,44 +441,47 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onStartTracking: _startGpsTracking,
         onStopTracking: _stopGpsTracking,
       ),
-      LegsScreen(
-        trip: trip,
-        legs: tripRepository.activeTripLegs,
-        activeLeg: activeLeg,
-        onSelectLeg: _selectLeg,
-        onAddLeg: _addLeg,
-        onCloneLeg: _cloneLeg,
-        onDeleteLeg: _deleteLeg,
+      TripToolsScreen(
+        onOpenRoute: () => _openScreen(routeScreen),
+        onOpenTimeline: () => _openScreen(timelineScreen),
+        onOpenLegs: () => _openScreen(legsScreen),
+        onOpenLegBuilder: () => _openScreen(legBuilderScreen),
+        onOpenPlans: () => _openScreen(ReservationsScreen(trip: trip)),
+        onOpenVault: () => _openScreen(DocumentsScreen(trip: trip)),
+        onOpenFuel: () => _openScreen(FuelScreen(trip: trip)),
       ),
-      LegBuilderScreen(
-        trip: legTrip,
-        leg: activeLeg,
-        onSaveLeg: _saveLeg,
-      ),
-      ReservationsScreen(trip: trip),
-      DocumentsScreen(trip: trip),
-      FuelScreen(trip: trip),
       ProfileScreen(trip: trip),
     ];
 
     return Scaffold(
-      body: screens[_selectedIndex],
+      body: IndexedStack(index: _selectedIndex, children: screens),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) => setState(() => _selectedIndex = index),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.flight_takeoff), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.list_alt), label: 'Trips'),
-          NavigationDestination(icon: Icon(Icons.add_location_alt), label: 'New'),
-          NavigationDestination(icon: Icon(Icons.route), label: 'Route'),
-          NavigationDestination(icon: Icon(Icons.timeline), label: 'Pace'),
-          NavigationDestination(icon: Icon(Icons.gps_fixed), label: 'GPS'),
-          NavigationDestination(icon: Icon(Icons.alt_route), label: 'Legs'),
-          NavigationDestination(icon: Icon(Icons.edit_road), label: 'Build'),
-          NavigationDestination(icon: Icon(Icons.confirmation_number), label: 'Plans'),
-          NavigationDestination(icon: Icon(Icons.folder_special), label: 'Vault'),
-          NavigationDestination(icon: Icon(Icons.local_gas_station), label: 'Fuel'),
-          NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home_rounded),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.luggage_outlined),
+            selectedIcon: Icon(Icons.luggage_rounded),
+            label: 'Trips',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.gps_fixed_rounded),
+            label: 'GPS',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.grid_view_rounded),
+            label: 'Tools',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline_rounded),
+            selectedIcon: Icon(Icons.person_rounded),
+            label: 'Profile',
+          ),
         ],
       ),
     );

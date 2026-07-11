@@ -4,24 +4,13 @@ import '../models/journey_event.dart';
 import '../models/route_checkpoint_status.dart';
 import '../models/trip.dart';
 import '../models/trip_state.dart';
-import '../services/driver_eligibility_service.dart';
-import '../services/eta_calculator.dart';
 import '../services/event_detector.dart';
-import '../services/journey_stats_service.dart';
 import '../services/trip_progress_service.dart';
 import '../theme/uta_theme.dart';
-import '../widgets/journey_stats_card.dart';
 import '../widgets/progress_status_badge.dart';
-import '../widgets/section_header.dart';
 import '../widgets/status_tile.dart';
-import '../widgets/trip_dashboard_card.dart';
 import '../widgets/uta_card.dart';
 import '../widgets/uta_logo.dart';
-import '../widgets/uta_metric_ring.dart';
-import '../widgets/uta_module_chip.dart';
-import '../widgets/uta_pattern_background.dart';
-import '../widgets/uta_travel_sign.dart';
-import '../widgets/warning_banner.dart';
 
 class MissionControlScreen extends StatelessWidget {
   const MissionControlScreen({
@@ -36,6 +25,10 @@ class MissionControlScreen extends StatelessWidget {
     required this.completedTime,
     required this.onStartTrip,
     required this.onEndTrip,
+    required this.onPlanTrip,
+    required this.onOpenTrips,
+    required this.onOpenGps,
+    required this.onOpenTools,
   });
 
   final Trip trip;
@@ -48,228 +41,301 @@ class MissionControlScreen extends StatelessWidget {
   final DateTime? completedTime;
   final VoidCallback onStartTrip;
   final VoidCallback onEndTrip;
+  final VoidCallback onPlanTrip;
+  final VoidCallback onOpenTrips;
+  final VoidCallback onOpenGps;
+  final VoidCallback onOpenTools;
+
+  bool get _hasJourney =>
+      trip.origin != 'Choose a start' &&
+      trip.destination != 'Choose a destination';
 
   @override
   Widget build(BuildContext context) {
-    final eta = const EtaCalculator();
-    final progressService = const TripProgressService();
-    final snapshot = progressService.snapshot(
-      trip: trip,
-      statuses: statuses,
-      departureTime: departureTime,
-      targetArrivalTime: targetArrivalTime,
-    );
-    final legalMinutes = eta.totalLegalMinutes(trip);
-    final plannedMinutes = eta.totalPlannedMinutes(trip);
-    final savedMinutes = legalMinutes - plannedMinutes;
-    final driverService = const DriverEligibilityService();
-    final stats = const JourneyStatsService().buildStats(
-      trip: trip,
-      statuses: statuses,
-      manualEvents: manualEvents,
-      departureTime: departureTime,
-      completedTime: completedTime,
-    );
-    final kenzie = trip.profiles.firstWhere((p) => p.name == 'Kenzie');
-
-    return CustomScrollView(
-      slivers: [
-        SliverAppBar(
-          expandedHeight: 270,
-          pinned: true,
-          flexibleSpace: FlexibleSpaceBar(
-            titlePadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-            title: const Text('Mission Control'),
-            background: UtaPatternBackground(
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 20, 18, 62),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const UtaLogo(showWordmark: true),
-                      const Spacer(),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: const [
-                          UtaTravelSign(kind: UtaSignKind.road, label: 'I-95 S', compact: true),
-                          UtaTravelSign(kind: UtaSignKind.airport, label: 'TRAVEL DAY', compact: true),
-                          UtaTravelSign(kind: UtaSignKind.boat, label: 'NO WAKE', compact: true),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        '${trip.name}\n${trip.origin} → ${trip.destination}',
-                        style: const TextStyle(color: UtaColors.muted, height: 1.3),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const UtaLogo(showWordmark: true),
+        actions: [
+          IconButton(
+            onPressed: onPlanTrip,
+            icon: const Icon(Icons.add_rounded),
+            tooltip: 'Plan a trip',
           ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
+          children: [
+            if (!_hasJourney) _buildWelcome(context) else _buildJourney(context),
+            const SizedBox(height: 18),
+            Text('Quick access', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            _QuickAccessGrid(
+              onOpenTrips: onOpenTrips,
+              onOpenGps: onOpenGps,
+              onOpenTools: onOpenTools,
+              onPlanTrip: onPlanTrip,
+            ),
+          ],
         ),
-        SliverPadding(
-          padding: const EdgeInsets.all(16),
-          sliver: SliverList.list(
+      ),
+    );
+  }
+
+  Widget _buildWelcome(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 18),
+        Text(
+          'Where are you going?',
+          style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                fontWeight: FontWeight.w900,
+                height: 1.05,
+              ),
+        ),
+        const SizedBox(height: 10),
+        const Text(
+          'Create a trip with a start and destination. UTA will build the journey workspace around it.',
+          style: TextStyle(color: UtaColors.muted, fontSize: 17, height: 1.4),
+        ),
+        const SizedBox(height: 22),
+        UtaCard(
+          highlight: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              TripDashboardCard(trip: trip),
-              const SizedBox(height: 12),
-              UtaCard(
-                highlight: true,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth > 640;
-                    final mainContent = Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(tripState.label, style: const TextStyle(color: UtaColors.muted)),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Titanic Exhibition • ${trip.targetArrivalLabel}',
-                          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
-                        ),
-                        const SizedBox(height: 12),
-                        ProgressStatusBadge(
-                          label: snapshot.statusLabel,
-                          detail: snapshot.statusDetail,
-                          minutesAheadBehind: snapshot.minutesAheadBehind,
-                        ),
-                        const SizedBox(height: 14),
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: const [
-                            UtaModuleChip(kind: UtaSignKind.ticket, label: 'Tickets', enabled: true),
-                            UtaModuleChip(kind: UtaSignKind.fuel, label: 'Fuel', enabled: true),
-                            UtaModuleChip(kind: UtaSignKind.hotel, label: 'Vault', enabled: true),
-                            UtaModuleChip(kind: UtaSignKind.warning, label: 'GPS Later', enabled: false),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: StatusTile(
-                                label: 'Current ETA',
-                                value: snapshot.projectedArrivalLabel,
-                                icon: Icons.schedule,
-                                color: UtaColors.mint,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: StatusTile(
-                                label: 'Checkpoints',
-                                value: '${snapshot.loggedCount}/${snapshot.totalCount}',
-                                icon: Icons.flag_rounded,
-                                color: UtaColors.gold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 14),
-                        if (tripState != TripState.active)
-                          FilledButton.icon(
-                            onPressed: onStartTrip,
-                            icon: const Icon(Icons.play_arrow_rounded),
-                            label: const Text('Start Trip Now'),
-                          )
-                        else
-                          FilledButton.icon(
-                            onPressed: onEndTrip,
-                            icon: const Icon(Icons.flag_rounded),
-                            label: const Text('End Journey'),
-                          ),
-                      ],
-                    );
-
-                    if (!wide) {
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          mainContent,
-                          const SizedBox(height: 16),
-                          Center(
-                            child: UtaMetricRing(
-                              value: '${(snapshot.progress * 100).round()}%',
-                              label: 'trip\ncomplete',
-                              progress: snapshot.progress,
-                            ),
-                          ),
-                        ],
-                      );
-                    }
-
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(child: mainContent),
-                        const SizedBox(width: 24),
-                        UtaMetricRing(
-                          value: '${(snapshot.progress * 100).round()}%',
-                          label: 'trip\ncomplete',
-                          progress: snapshot.progress,
-                        ),
-                      ],
-                    );
-                  },
-                ),
+              const Icon(Icons.travel_explore_rounded, size: 42, color: UtaColors.gold),
+              const SizedBox(height: 18),
+              const Text(
+                'Plan your first journey',
+                style: TextStyle(fontSize: 25, fontWeight: FontWeight.w900),
               ),
-              if (completedTime != null) ...[
-                const SectionHeader('Trip complete', subtitle: 'Summary of the journey so far.'),
-                JourneyStatsCard(stats: stats),
-              ],
-              const SectionHeader('Trip cockpit', subtitle: 'Fast read for the drive.'),
-              StatusTile(label: 'Departure basis', value: tripState == TripState.active ? 'Started now' : trip.departureLabel, icon: Icons.departure_board),
-              const SizedBox(height: 10),
-              StatusTile(label: 'Next checkpoint', value: snapshot.nextCheckpointLabel, icon: Icons.route),
-              const SizedBox(height: 10),
-              StatusTile(label: 'Tracking mode', value: trackingMode.description, icon: Icons.gps_fixed_rounded, color: UtaColors.sky),
-              const SizedBox(height: 10),
-              StatusTile(
-                label: 'Kenzie window',
-                value: driverService.eligibilitySummary(kenzie, trip.sunriseLabel, trip.sunsetLabel),
-                icon: Icons.wb_sunny,
-                color: UtaColors.sunset,
+              const SizedBox(height: 8),
+              const Text(
+                'Choose any start and destination in the world. Dates, route, reservations and live GPS can be added as you need them.',
+                style: TextStyle(color: UtaColors.muted, height: 1.4),
               ),
-              const SectionHeader('Travel signs', subtitle: 'UTA visual language: road signs, airport cards, docks, tickets, vaults.'),
-              const Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  UtaTravelSign(kind: UtaSignKind.road, label: 'ROUTE'),
-                  UtaTravelSign(kind: UtaSignKind.airport, label: 'AIRPORT'),
-                  UtaTravelSign(kind: UtaSignKind.boat, label: 'NO WAKE'),
-                  UtaTravelSign(kind: UtaSignKind.hotel, label: 'HOTEL'),
-                  UtaTravelSign(kind: UtaSignKind.ticket, label: 'TICKET'),
-                  UtaTravelSign(kind: UtaSignKind.fuel, label: 'FUEL'),
-                  UtaTravelSign(kind: UtaSignKind.passport, label: 'VAULT'),
-                ],
-              ),
-              const SectionHeader('Planning profile'),
-              const WarningBanner(
-                title: 'Planning estimate only',
-                message: 'UTA estimates travel time using selected planning profiles. Always obey posted speed limits, traffic laws, weather conditions, road conditions, and police instructions.',
-              ),
-              const SizedBox(height: 12),
-              UtaCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Legal estimate: $legalMinutes min', style: const TextStyle(fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 6),
-                    Text('Planned estimate: $plannedMinutes min', style: const TextStyle(fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 6),
-                    Text('Planning difference: $savedMinutes min', style: const TextStyle(color: UtaColors.gold, fontWeight: FontWeight.w900)),
-                  ],
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: onPlanTrip,
+                  icon: const Icon(Icons.add_location_alt_rounded),
+                  label: const Text('Create a trip'),
                 ),
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildJourney(BuildContext context) {
+    final snapshot = const TripProgressService().snapshot(
+      trip: trip,
+      statuses: statuses,
+      departureTime: departureTime,
+      targetArrivalTime: targetArrivalTime,
+    );
+    final nextPlan = trip.reservations.isEmpty ? null : trip.reservations.first;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 12),
+        Text(
+          trip.name,
+          style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                fontWeight: FontWeight.w900,
+                height: 1.05,
+              ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '${trip.origin}  →  ${trip.destination}',
+          style: const TextStyle(color: UtaColors.muted, fontSize: 17),
+        ),
+        const SizedBox(height: 18),
+        UtaCard(
+          highlight: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      tripState == TripState.active ? 'Journey in progress' : 'Ready when you are',
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  Icon(
+                    tripState == TripState.active
+                        ? Icons.navigation_rounded
+                        : Icons.luggage_rounded,
+                    color: UtaColors.gold,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              ProgressStatusBadge(
+                label: snapshot.statusLabel,
+                detail: snapshot.statusDetail,
+                minutesAheadBehind: snapshot.minutesAheadBehind,
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: StatusTile(
+                      label: 'Departure',
+                      value: trip.departureLabel,
+                      icon: Icons.departure_board_rounded,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: StatusTile(
+                      label: 'Current ETA',
+                      value: snapshot.projectedArrivalLabel,
+                      icon: Icons.schedule_rounded,
+                      color: UtaColors.mint,
+                    ),
+                  ),
+                ],
+              ),
+              if (nextPlan != null) ...[
+                const SizedBox(height: 12),
+                StatusTile(
+                  label: 'Next plan',
+                  value: '${nextPlan.title} • ${nextPlan.timeLabel}',
+                  icon: Icons.event_available_rounded,
+                  color: UtaColors.gold,
+                ),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: tripState == TripState.active ? onEndTrip : onStartTrip,
+                  icon: Icon(
+                    tripState == TripState.active
+                        ? Icons.flag_rounded
+                        : Icons.play_arrow_rounded,
+                  ),
+                  label: Text(
+                    tripState == TripState.active ? 'End journey' : 'Start journey',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QuickAccessGrid extends StatelessWidget {
+  const _QuickAccessGrid({
+    required this.onOpenTrips,
+    required this.onOpenGps,
+    required this.onOpenTools,
+    required this.onPlanTrip,
+  });
+
+  final VoidCallback onOpenTrips;
+  final VoidCallback onOpenGps;
+  final VoidCallback onOpenTools;
+  final VoidCallback onPlanTrip;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      _QuickAccessItem(
+        label: 'Trips',
+        detail: 'Saved journeys',
+        icon: Icons.luggage_rounded,
+        onTap: onOpenTrips,
+      ),
+      _QuickAccessItem(
+        label: 'GPS',
+        detail: 'Live location',
+        icon: Icons.gps_fixed_rounded,
+        onTap: onOpenGps,
+      ),
+      _QuickAccessItem(
+        label: 'Tools',
+        detail: 'Route, plans, fuel',
+        icon: Icons.dashboard_customize_rounded,
+        onTap: onOpenTools,
+      ),
+      _QuickAccessItem(
+        label: 'New trip',
+        detail: 'Start somewhere new',
+        icon: Icons.add_location_alt_rounded,
+        onTap: onPlanTrip,
+      ),
+    ];
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 1.35,
+      ),
+      itemCount: items.length,
+      itemBuilder: (context, index) => items[index],
+    );
+  }
+}
+
+class _QuickAccessItem extends StatelessWidget {
+  const _QuickAccessItem({
+    required this.label,
+    required this.detail,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final String detail;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: UtaColors.card,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Icon(icon, color: UtaColors.sky),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(fontWeight: FontWeight.w900)),
+                  const SizedBox(height: 2),
+                  Text(detail, style: const TextStyle(color: UtaColors.muted, fontSize: 12)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -1,4 +1,4 @@
-import '../data/orlando_trip_data.dart';
+import '../data/default_trip_data.dart';
 import '../models/reservation.dart';
 import '../models/trip.dart';
 import '../models/trip_type.dart';
@@ -17,29 +17,40 @@ class TripFactoryService {
     required String targetArrivalLabel,
     required int arrivalBufferMinutes,
   }) {
-    final base = OrlandoTripData.trip;
+    final safeOrigin = origin.trim();
+    final safeDestination = destination.trim();
+    final safeTarget = targetArrivalLabel.trim();
 
-    return base.copyWith(
-      name: name.trim().isEmpty ? 'New Trip' : name.trim(),
-      origin: origin.trim().isEmpty ? 'Start location' : origin.trim(),
-      destination: destination.trim().isEmpty ? 'Destination' : destination.trim(),
+    return DefaultTripData.trip.copyWith(
+      name: name.trim().isEmpty ? 'Untitled trip' : name.trim(),
+      origin: safeOrigin.isEmpty ? 'Choose a start' : safeOrigin,
+      destination:
+          safeDestination.isEmpty ? 'Choose a destination' : safeDestination,
       tripType: tripType,
-      startDateLabel: startDateLabel.trim().isEmpty ? 'Not set' : startDateLabel.trim(),
-      endDateLabel: endDateLabel.trim().isEmpty ? 'Not set' : endDateLabel.trim(),
-      departureLabel: departureLabel.trim().isEmpty ? 'Not set' : departureLabel.trim(),
-      targetArrivalLabel: targetArrivalLabel.trim().isEmpty ? 'Not set' : targetArrivalLabel.trim(),
+      startDateLabel:
+          startDateLabel.trim().isEmpty ? 'Not set' : startDateLabel.trim(),
+      endDateLabel:
+          endDateLabel.trim().isEmpty ? 'Not set' : endDateLabel.trim(),
+      departureLabel:
+          departureLabel.trim().isEmpty ? 'Not set' : departureLabel.trim(),
+      targetArrivalLabel: safeTarget.isEmpty ? 'Not set' : safeTarget,
       plannedArrivalLabel: 'Needs route',
       currentEtaLabel: 'Needs route',
       arrivalBufferMinutes: arrivalBufferMinutes,
-      reservations: [
-        Reservation(
-          title: 'Primary arrival target',
-          timeLabel: targetArrivalLabel.trim().isEmpty ? 'Not set' : targetArrivalLabel.trim(),
-          location: destination.trim().isEmpty ? 'Destination' : destination.trim(),
-          category: 'Arrival',
-          note: 'Created from New Trip wizard. Add exact reservations later.',
-        ),
-      ],
+      route: const [],
+      stops: const [],
+      fuelEntries: const [],
+      reservations: safeTarget.isEmpty || safeDestination.isEmpty
+          ? const []
+          : [
+              Reservation(
+                title: 'Arrival target',
+                timeLabel: safeTarget,
+                location: safeDestination,
+                category: 'Arrival',
+                note: 'Created from trip setup.',
+              ),
+            ],
     );
   }
 }
