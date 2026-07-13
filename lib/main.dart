@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'models/driving_session.dart';
+import 'models/profile.dart';
 import 'models/journey_event.dart';
 import 'models/gps_tracking_state.dart';
 import 'models/journey_event_type.dart';
@@ -25,6 +27,8 @@ import 'screens/trip_tools_screen.dart';
 import 'screens/trip_wizard_screen.dart';
 import 'screens/trips_screen.dart';
 import 'services/checkpoint_proximity_service.dart';
+import 'services/driving_log_service.dart';
+import 'services/driver_eligibility_service.dart';
 import 'services/event_detector.dart';
 import 'services/location_service.dart';
 import 'services/osm_routing_service.dart';
@@ -76,6 +80,17 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       const CheckpointProximityService();
   StreamSubscription<LocationServiceSnapshot>? locationSubscription;
   bool _locationRequestInFlight = false;
+  final DrivingLogService drivingLogService = const DrivingLogService();
+  List<DrivingSession> drivingSessions = [];
+  String? activeDriverId;
+
+  Profile? get activeDriver {
+    if (activeDriverId == null) return null;
+    for (final profile in trip.profiles) {
+      if (profile.id == activeDriverId) return profile;
+    }
+    return null;
+  }
 
   late Trip trip = tripRepository.activeTrip;
   late TripLeg activeLeg = tripRepository.activeLeg;
@@ -95,6 +110,33 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
   late List<RouteCheckpointStatus> statuses = _freshStatusesForActiveLeg();
 
   List<JourneyEvent> manualEvents = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDrivingSessions();
+    final eligible = trip.profiles.where((profile) => profile.canDrive).toList();
+    final primary = eligible.where((profile) => profile.isPrimary);
+    activeDriverId = primary.isNotEmpty
+        ? primary.first.id
+        : (eligible.isEmpty ? null : eligible.first.id);
+  }
+
+  Future<void> _loadDrivingSessions() async {
+    final loaded = await drivingLogService.load();
+    if (!mounted) return;
+    setState(() {
+      drivingSessions = loaded;
+      final live = loaded.where((session) => session.isActive);
+      if (live.isNotEmpty &&
+          trip.profiles.any((profile) => profile.id == live.last.profileId)) {
+        activeDriverId = live.last.profileId;
+      }
+    });
+  }
+
+  Future<void> _persistDrivingSessions() =>
+      drivingLogService.save(drivingSessions);
 
   Trip get activeLegTripView {
     return trip.copyWith(
@@ -118,6 +160,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
     statuses = _freshStatusesForActiveLeg();
     completedTime = null;
     manualEvents = const [];
+    final drivers = trip.profiles.where((profile) => profile.canDrive);
+    activeDriverId = drivers.isEmpty ? null : drivers.first.id;
   }
 
   void _selectTrip(String id) {
@@ -136,12 +180,16 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
 
   void _setCurrentTrip(Trip newTrip) {
     setState(() {
-      tripRepository.createTrip(newTrip);
+      tripRepository.createTrip(newTrip.copyWith(profiles: trip.profiles));
       _syncFromRepository();
     });
   }
 
   void _startTripNow() {
+    if (activeDriver != null &&
+        !drivingSessions.any((session) => session.isActive)) {
+      _switchDriver(activeDriver);
+    }
     setState(() {
       final now = DateTime.now();
       departureTime = now;
@@ -167,6 +215,7 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
   }
 
   void _endJourney() {
+    _switchDriver(null);
     setState(() {
       completedTime = DateTime.now();
       tripState = TripState.completed;
@@ -273,9 +322,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       );
     }
 
-    final driverName = activeLeg.segments.isEmpty
-        ? 'Rich'
-        : activeLeg.segments.first.assignedDriverName;
+    final driverName = activeDriver?.name ??
+        (activeLeg.segments.isEmpty ? '' : activeLeg.segments.first.assignedDriverName);
     final plan = await const OsmRoutingService().buildDrivingRoute(
       origin: GeocodedPlace(
         displayName: 'Current location',
@@ -312,6 +360,134 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
     });
   }
 
+
+  void _saveProfiles(List<Profile> profiles) {
+    setState(() {
+      tripRepository.updateProfiles(profiles);
+      _syncFromRepository();
+      if (activeDriverId != null &&
+          !profiles.any((profile) => profile.id == activeDriverId)) {
+        activeDriverId = null;
+      }
+    });
+  }
+
+  Future<void> _switchDriver(Profile? profile) async {
+    if (profile != null &&
+        !const DriverEligibilityService().isEligible(profile)) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final activeIndex = drivingSessions.indexWhere((session) => session.isActive);
+    if (activeIndex >= 0 &&
+        (profile == null ||
+            profile.id != drivingSessions[activeIndex].profileId ||
+            tripState != TripState.active)) {
+      final existing = drivingSessions[activeIndex];
+      drivingSessions[activeIndex] = existing.copyWith(
+        endedAt: now,
+        endLatitude: lastLocation?.latitude,
+        endLongitude: lastLocation?.longitude,
+      );
+    }
+
+    final hasLiveSession = drivingSessions.any(
+      (session) => session.isActive && session.profileId == profile?.id,
+    );
+    if (profile != null && tripState == TripState.active && !hasLiveSession) {
+      drivingSessions = [
+        ...drivingSessions,
+        DrivingSession(
+          id: 'session-${now.microsecondsSinceEpoch}',
+          profileId: profile.id,
+          driverName: profile.name,
+          tripId: tripRepository.activeRecord.id,
+          tripName: trip.name,
+          legId: activeLeg.id,
+          legName: activeLeg.name,
+          startedAt: now,
+          startLatitude: lastLocation?.latitude,
+          startLongitude: lastLocation?.longitude,
+        ),
+      ];
+    }
+
+    setState(() => activeDriverId = profile?.id);
+    await _persistDrivingSessions();
+  }
+
+
+  Future<void> _showDriverSwitcher() async {
+    final drivers = trip.profiles.where((profile) => profile.canDrive).toList();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Change driver', style: UtaText.title),
+              const SizedBox(height: 6),
+              const Text(
+                'Switching drivers closes the current driving session and starts a new one.',
+                style: TextStyle(color: UtaColors.muted),
+              ),
+              const SizedBox(height: 14),
+              if (drivers.isEmpty)
+                const Text('Add a driver in Profiles first.'),
+              for (final driver in drivers)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(child: Text(driver.name.substring(0, 1).toUpperCase())),
+                  title: Text(driver.name),
+                  subtitle: Text(const DriverEligibilityService().eligibilitySummary(driver)),
+                  trailing: activeDriverId == driver.id
+                      ? const Icon(Icons.check_circle_rounded, color: UtaColors.mint)
+                      : null,
+                  enabled: const DriverEligibilityService().isEligible(driver),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _switchDriver(driver);
+                  },
+                ),
+              if (activeDriverId != null)
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _switchDriver(null);
+                  },
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: const Text('Stop driving'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _deleteTrip(String id) {
+    setState(() {
+      tripRepository.deleteTrip(id);
+      _syncFromRepository();
+      activeDriverId = null;
+    });
+  }
+
+  Future<void> _addManualSession(DrivingSession session) async {
+    setState(() => drivingSessions = [...drivingSessions, session]);
+    await _persistDrivingSessions();
+  }
+
+  Future<void> _deleteSession(String id) async {
+    setState(() => drivingSessions =
+        drivingSessions.where((session) => session.id != id).toList());
+    await _persistDrivingSessions();
+  }
 
   Future<void> _requestLocationPermission() async {
     if (_locationRequestInFlight) return;
@@ -520,6 +696,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onOpenTrips: () => setState(() => _selectedIndex = 1),
         onOpenGps: () => setState(() => _selectedIndex = 2),
         onOpenTools: () => setState(() => _selectedIndex = 3),
+        currentDriver: activeDriver,
+        onChangeDriver: _showDriverSwitcher,
       ),
       TripsScreen(
         records: tripRepository.records,
@@ -529,6 +707,7 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         },
         onCloneActiveTrip: _cloneActiveTrip,
         onCreateTrip: _openTripWizard,
+        onDeleteTrip: _deleteTrip,
       ),
       GpsScreen(
         trip: legTrip,
@@ -546,6 +725,8 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onReroute: _rerouteFromCurrentLocation,
         onOpenAppSettings: _openAppSettings,
         onOpenLocationSettings: _openLocationSettings,
+        currentDriver: activeDriver,
+        onChangeDriver: _showDriverSwitcher,
       ),
       TripToolsScreen(
         onOpenRoute: () => _openScreen(routeScreen),
@@ -556,7 +737,15 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onOpenVault: () => _openScreen(DocumentsScreen(trip: trip)),
         onOpenFuel: () => _openScreen(FuelScreen(trip: trip)),
       ),
-      ProfileScreen(trip: trip),
+      ProfileScreen(
+        trip: trip,
+        sessions: drivingSessions,
+        activeDriverId: activeDriverId,
+        onSaveProfiles: _saveProfiles,
+        onChangeDriver: _showDriverSwitcher,
+        onAddManualSession: _addManualSession,
+        onDeleteSession: _deleteSession,
+      ),
     ];
 
     return Scaffold(

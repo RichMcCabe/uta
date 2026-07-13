@@ -30,21 +30,25 @@ class OrlandoTripData {
     ],
     profiles: [
       Profile(
+        id: 'rich',
         name: 'Rich',
         role: 'Primary traveler',
+        isPrimary: true,
         canDrive: true,
         drivingStyle: DrivingStyle.overSixToTen,
         restriction: DriverRestriction(hasRestrictions: false),
       ),
       Profile(
+        id: 'kenzie',
         name: 'Kenzie',
         role: 'Learner driver',
+        drivingTargetMinutes: 60 * 60,
         canDrive: true,
         drivingStyle: DrivingStyle.underLimit,
         restriction: DriverRestriction(
           hasRestrictions: true,
-          sunriseRestricted: true,
-          sunsetRestricted: true,
+          allowedStartMinutes: 5 * 60,
+          allowedEndMinutes: 21 * 60,
           maxContinuousMinutes: 120,
           notes: 'Permit restriction: daylight driving only.',
         ),

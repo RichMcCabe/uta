@@ -35,6 +35,8 @@ class MissionControlScreen extends StatelessWidget {
     required this.onOpenTrips,
     required this.onOpenGps,
     required this.onOpenTools,
+    required this.currentDriver,
+    required this.onChangeDriver,
   });
 
   final Trip trip;
@@ -54,6 +56,8 @@ class MissionControlScreen extends StatelessWidget {
   final VoidCallback onOpenTrips;
   final VoidCallback onOpenGps;
   final VoidCallback onOpenTools;
+  final Profile? currentDriver;
+  final VoidCallback onChangeDriver;
 
   bool get _hasJourney =>
       trip.origin != 'Choose a start' &&
@@ -153,14 +157,12 @@ class MissionControlScreen extends StatelessWidget {
     final completedMiles = _completedMiles();
     final remainingMiles = (totalMiles - completedMiles).clamp(0, double.infinity);
     final progressPercent = (snapshot.progress * 100).round();
-    final currentDriver = _currentDriverName();
-    final driverProfile = _driverProfile(currentDriver);
+    final currentDriverName = currentDriver?.name ?? 'Choose driver';
+    final driverProfile = currentDriver;
     final restriction = driverProfile == null
         ? 'Driver profile unavailable'
         : const DriverEligibilityService().eligibilitySummary(
             driverProfile,
-            trip.sunriseLabel,
-            trip.sunsetLabel,
           );
     final nextStop = trip.stops.isEmpty ? null : trip.stops.first;
     final fuelCost = trip.fuelEntries.fold<double>(0, (sum, entry) => sum + entry.totalCost);
@@ -223,11 +225,15 @@ class MissionControlScreen extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: _MetricCard(
-                label: 'DRIVER',
-                value: currentDriver,
-                detail: driverProfile?.canDrive == true ? 'Eligible' : 'Check profile',
-                icon: Icons.person_rounded,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: onChangeDriver,
+                child: _MetricCard(
+                  label: 'DRIVER',
+                  value: currentDriverName,
+                  detail: driverProfile == null ? 'Tap to choose' : restriction,
+                  icon: Icons.swap_horiz_rounded,
+                ),
               ),
             ),
           ],
@@ -353,24 +359,6 @@ class MissionControlScreen extends StatelessWidget {
   double _completedMiles() {
     final loggedIds = statuses.where((status) => status.isLogged).map((status) => status.segmentId).toSet();
     return trip.route.where((segment) => loggedIds.contains(segment.id)).fold<double>(0, (sum, segment) => sum + segment.distanceMiles);
-  }
-
-  String _currentDriverName() {
-    final loggedIds = statuses.where((status) => status.isLogged).map((status) => status.segmentId).toSet();
-    for (final segment in trip.route) {
-      if (!loggedIds.contains(segment.id) && segment.assignedDriverName.trim().isNotEmpty) {
-        return segment.assignedDriverName;
-      }
-    }
-    if (trip.profiles.isNotEmpty) return trip.profiles.first.name;
-    return 'Unassigned';
-  }
-
-  Profile? _driverProfile(String name) {
-    for (final profile in trip.profiles) {
-      if (profile.name == name) return profile;
-    }
-    return null;
   }
 
   String _gpsSummary() {

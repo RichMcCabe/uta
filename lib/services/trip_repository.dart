@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../data/default_trip_data.dart';
+import '../models/profile.dart';
 import '../models/saved_trip_record.dart';
 import '../models/trip.dart';
 import '../models/trip_leg.dart';
@@ -63,7 +64,9 @@ class TripRepository {
   late String _activeTripId;
   late String _activeLegId;
 
-  List<SavedTripRecord> get records => List.unmodifiable(_records);
+  List<SavedTripRecord> get records => List.unmodifiable(
+        _records.where((record) => record.id != 'starter-trip'),
+      );
 
   SavedTripRecord get activeRecord =>
       _records.firstWhere((record) => record.id == _activeTripId);
@@ -292,6 +295,38 @@ class TripRepository {
           ],
         ),
     ];
+    _persist();
+  }
+
+
+  void updateProfiles(List<Profile> profiles) {
+    final now = DateTime.now();
+    _records = [
+      for (final record in _records)
+        if (record.id == _activeTripId)
+          record.copyWith(
+            trip: record.trip.copyWith(profiles: profiles),
+            updatedAt: now,
+          )
+        else
+          record,
+    ];
+    _persist();
+  }
+
+  void deleteTrip(String id) {
+    if (!_records.any((record) => record.id == id)) return;
+    _records = _records.where((record) => record.id != id).toList();
+    if (_records.isEmpty) {
+      _seed();
+    } else if (_activeTripId == id) {
+      _activeTripId = _records.first.id;
+      _activeLegId = _records.first.legs.isEmpty ? '' : _records.first.legs.first.id;
+      _records = [
+        for (final record in _records)
+          record.copyWith(isActive: record.id == _activeTripId),
+      ];
+    }
     _persist();
   }
 

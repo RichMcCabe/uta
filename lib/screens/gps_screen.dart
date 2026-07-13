@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../models/gps_tracking_state.dart';
 import '../models/location_permission_status.dart';
+import '../models/profile.dart';
 import '../models/tracked_location.dart';
 import '../models/trip.dart';
 import '../models/trip_state.dart';
@@ -34,6 +35,8 @@ class GpsScreen extends StatefulWidget {
     required this.onReroute,
     required this.onOpenAppSettings,
     required this.onOpenLocationSettings,
+    required this.currentDriver,
+    required this.onChangeDriver,
   });
 
   final Trip trip;
@@ -51,6 +54,8 @@ class GpsScreen extends StatefulWidget {
   final Future<void> Function(TrackedLocation location) onReroute;
   final VoidCallback onOpenAppSettings;
   final VoidCallback onOpenLocationSettings;
+  final Profile? currentDriver;
+  final VoidCallback onChangeDriver;
 
   @override
   State<GpsScreen> createState() => _GpsScreenState();
@@ -120,19 +125,11 @@ class _GpsScreenState extends State<GpsScreen> {
   Widget build(BuildContext context) {
     final snapshot = _snapshot;
     final isActive = widget.tripState == TripState.active;
-    final driver = widget.trip.route.isEmpty
-        ? null
-        : widget.trip.route[math.min(math.max(snapshot.activeSegmentIndex, 0), widget.trip.route.length - 1)].assignedDriverName;
-    final profile = driver == null
-        ? null
-        : widget.trip.profiles.where((item) => item.name == driver).firstOrNull;
+    final profile = widget.currentDriver;
+    final driver = profile?.name;
     final restriction = profile == null
-        ? 'Driver not assigned'
-        : const DriverEligibilityService().eligibilitySummary(
-            profile,
-            widget.trip.sunriseLabel,
-            widget.trip.sunsetLabel,
-          );
+        ? 'Tap to choose a driver'
+        : const DriverEligibilityService().eligibilitySummary(profile);
 
     return Scaffold(
       appBar: AppBar(
@@ -174,10 +171,15 @@ class _GpsScreenState extends State<GpsScreen> {
             const SizedBox(height: 12),
             _ProgressCard(snapshot: snapshot),
             const SizedBox(height: 12),
-            _DriverCard(
-              driver: driver ?? 'Unassigned',
-              restriction: restriction,
-              isWarning: profile?.restriction.hasRestrictions ?? false,
+            InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: widget.onChangeDriver,
+              child: _DriverCard(
+                driver: driver ?? 'Choose driver',
+                restriction: restriction,
+                isWarning: profile != null &&
+                    !const DriverEligibilityService().isEligible(profile),
+              ),
             ),
             if (snapshot.isOffRoute && !_isRerouting) ...[
               const SizedBox(height: 12),
@@ -437,6 +439,3 @@ String _distanceLabel(double miles) {
   return '${miles.toStringAsFixed(miles < 10 ? 1 : 0)} mi';
 }
 
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-}

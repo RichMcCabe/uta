@@ -100,7 +100,7 @@ class OsmRoutingService {
   Future<OsmRoutePlan> buildDrivingRoute({
     required GeocodedPlace origin,
     required GeocodedPlace destination,
-    String assignedDriverName = 'Rich',
+    String assignedDriverName = '',
   }) async {
     final uri = Uri.https(
       'router.project-osrm.org',

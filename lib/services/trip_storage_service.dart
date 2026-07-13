@@ -256,7 +256,7 @@ class TripStorageService {
         instruction: json['instruction']?.toString() ?? 'Continue',
         distanceMiles: (json['distanceMiles'] as num?)?.toDouble() ?? 0,
         speedLimitMph: (json['speedLimitMph'] as num?)?.round() ?? 35,
-        assignedDriverName: json['assignedDriverName']?.toString() ?? 'Rich',
+        assignedDriverName: json['assignedDriverName']?.toString() ?? '',
         speedSource: _enumByName(SpeedSource.values, json['speedSource']?.toString(), SpeedSource.estimated),
         isStop: json['isStop'] == true,
         plannedStopMinutes: (json['plannedStopMinutes'] as num?)?.round() ?? 0,
@@ -266,14 +266,17 @@ class TripStorageService {
       );
 
   Map<String, dynamic> _profileToJson(Profile item) => {
+        'id': item.id,
         'name': item.name,
         'role': item.role,
         'canDrive': item.canDrive,
         'drivingStyle': item.drivingStyle.name,
+        'isPrimary': item.isPrimary,
+        'drivingTargetMinutes': item.drivingTargetMinutes,
         'restriction': {
           'hasRestrictions': item.restriction.hasRestrictions,
-          'sunriseRestricted': item.restriction.sunriseRestricted,
-          'sunsetRestricted': item.restriction.sunsetRestricted,
+          'allowedStartMinutes': item.restriction.allowedStartMinutes,
+          'allowedEndMinutes': item.restriction.allowedEndMinutes,
           'maxContinuousMinutes': item.restriction.maxContinuousMinutes,
           'notes': item.restriction.notes,
         },
@@ -281,18 +284,34 @@ class TripStorageService {
 
   Profile _profileFromJson(Map<String, dynamic> json) {
     final restriction = json['restriction'] as Map<String, dynamic>? ?? const {};
+    final name = json['name']?.toString() ?? 'Traveler';
+    int? start = (restriction['allowedStartMinutes'] as num?)?.round();
+    int? end = (restriction['allowedEndMinutes'] as num?)?.round();
+    // One-time migration from the old sunrise/sunset prototype flags.
+    if (start == null && restriction['sunriseRestricted'] == true) start = 5 * 60;
+    if (end == null && restriction['sunsetRestricted'] == true) end = 21 * 60;
     return Profile(
-      name: json['name']?.toString() ?? 'Traveler',
+      id: json['id']?.toString() ??
+          'profile-${name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-')}',
+      name: name,
       role: json['role']?.toString() ?? 'Traveler',
       canDrive: json['canDrive'] == true,
-      drivingStyle: _enumByName(DrivingStyle.values, json['drivingStyle']?.toString(), DrivingStyle.postedLimit),
+      drivingStyle: _enumByName(
+        DrivingStyle.values,
+        json['drivingStyle']?.toString(),
+        DrivingStyle.postedLimit,
+      ),
       restriction: DriverRestriction(
         hasRestrictions: restriction['hasRestrictions'] == true,
-        sunriseRestricted: restriction['sunriseRestricted'] == true,
-        sunsetRestricted: restriction['sunsetRestricted'] == true,
-        maxContinuousMinutes: (restriction['maxContinuousMinutes'] as num?)?.round(),
+        allowedStartMinutes: start,
+        allowedEndMinutes: end,
+        maxContinuousMinutes:
+            (restriction['maxContinuousMinutes'] as num?)?.round(),
         notes: restriction['notes']?.toString(),
       ),
+      isPrimary: json['isPrimary'] == true,
+      drivingTargetMinutes:
+          (json['drivingTargetMinutes'] as num?)?.round() ?? 0,
     );
   }
 

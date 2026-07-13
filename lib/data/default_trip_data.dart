@@ -1,6 +1,3 @@
-import '../models/driver_restriction.dart';
-import '../models/driving_style.dart';
-import '../models/profile.dart';
 import '../models/travel_document.dart';
 import '../models/trip.dart';
 import '../models/trip_module.dart';
@@ -26,28 +23,8 @@ class DefaultTripData {
       TripModule.reservations,
       TripModule.liveTravel,
     ],
-    profiles: [
-      Profile(
-        name: 'Rich',
-        role: 'Primary traveler',
-        canDrive: true,
-        drivingStyle: DrivingStyle.overSixToTen,
-        restriction: DriverRestriction(hasRestrictions: false),
-      ),
-      Profile(
-        name: 'Kenzie',
-        role: 'Learner driver',
-        canDrive: true,
-        drivingStyle: DrivingStyle.underLimit,
-        restriction: DriverRestriction(
-          hasRestrictions: true,
-          sunriseRestricted: true,
-          sunsetRestricted: true,
-          maxContinuousMinutes: 120,
-          notes: 'Permit restriction: daylight driving only.',
-        ),
-      ),
-    ],
+    profiles: [],
+
     route: [],
     stops: [],
     reservations: [],

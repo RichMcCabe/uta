@@ -11,12 +11,14 @@ class TripsScreen extends StatelessWidget {
     required this.onSelectTrip,
     required this.onCloneActiveTrip,
     required this.onCreateTrip,
+    required this.onDeleteTrip,
   });
 
   final List<SavedTripRecord> records;
   final ValueChanged<String> onSelectTrip;
   final VoidCallback onCloneActiveTrip;
   final VoidCallback onCreateTrip;
+  final ValueChanged<String> onDeleteTrip;
 
   @override
   Widget build(BuildContext context) {
@@ -73,10 +75,54 @@ class TripsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
+            if (records.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: Text(
+                    'No saved trips yet.',
+                    style: TextStyle(color: UtaColors.muted),
+                  ),
+                ),
+              ),
             for (final record in records) ...[
-              SavedTripCard(
-                record: record,
-                onSelect: () => onSelectTrip(record.id),
+              Stack(
+                children: [
+                  SavedTripCard(
+                    record: record,
+                    onSelect: () => onSelectTrip(record.id),
+                  ),
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: IconButton.filledTonal(
+                      tooltip: 'Delete trip',
+                      icon: const Icon(Icons.delete_outline_rounded),
+                      onPressed: () async {
+                        final confirmed = await showDialog<bool>(
+                          context: context,
+                          builder: (dialogContext) => AlertDialog(
+                            title: const Text('Delete trip?'),
+                            content: Text(
+                              'Delete “${record.trip.name}” and all of its saved legs and directions? Driving-log history will be retained.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(dialogContext, false),
+                                child: const Text('Cancel'),
+                              ),
+                              FilledButton(
+                                onPressed: () => Navigator.pop(dialogContext, true),
+                                child: const Text('Delete'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirmed == true) onDeleteTrip(record.id);
+                      },
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 14),
             ],
