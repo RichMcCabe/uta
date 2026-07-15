@@ -6,6 +6,7 @@ class TripToolsScreen extends StatelessWidget {
   const TripToolsScreen({
     super.key,
     required this.onOpenRoute,
+    required this.onOpenDirections,
     required this.onOpenTimeline,
     required this.onOpenLegs,
     required this.onOpenLegBuilder,
@@ -15,6 +16,7 @@ class TripToolsScreen extends StatelessWidget {
   });
 
   final VoidCallback onOpenRoute;
+  final VoidCallback onOpenDirections;
   final VoidCallback onOpenTimeline;
   final VoidCallback onOpenLegs;
   final VoidCallback onOpenLegBuilder;
@@ -26,6 +28,7 @@ class TripToolsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final tools = [
       _Tool('Route', 'Checkpoints and progress', Icons.route_rounded, onOpenRoute),
+      _Tool('Directions', 'Every maneuver and ETA', Icons.list_alt_rounded, onOpenDirections),
       _Tool('Timeline', 'Journey pace and events', Icons.timeline_rounded, onOpenTimeline),
       _Tool('Legs', 'Multi-leg journeys', Icons.alt_route_rounded, onOpenLegs),
       _Tool('Build route', 'Edit a journey leg', Icons.edit_road_rounded, onOpenLegBuilder),

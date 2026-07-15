@@ -13,6 +13,7 @@ import 'models/trip.dart';
 import 'models/trip_leg.dart';
 import 'models/tracked_location.dart';
 import 'models/trip_state.dart';
+import 'screens/directions_screen.dart';
 import 'screens/documents_screen.dart';
 import 'screens/fuel_screen.dart';
 import 'screens/gps_screen.dart';
@@ -671,6 +672,12 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
       onCloneLeg: _cloneLeg,
       onDeleteLeg: _deleteLeg,
     );
+    final directionsScreen = DirectionsScreen(
+      trip: legTrip,
+      departureTime: departureTime,
+      currentDriver: activeDriver,
+      lastLocation: lastLocation,
+    );
     final legBuilderScreen = LegBuilderScreen(
       trip: legTrip,
       leg: activeLeg,
@@ -727,9 +734,11 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
         onOpenLocationSettings: _openLocationSettings,
         currentDriver: activeDriver,
         onChangeDriver: _showDriverSwitcher,
+        onOpenDirections: () => _openScreen(directionsScreen),
       ),
       TripToolsScreen(
         onOpenRoute: () => _openScreen(routeScreen),
+        onOpenDirections: () => _openScreen(directionsScreen),
         onOpenTimeline: () => _openScreen(timelineScreen),
         onOpenLegs: () => _openScreen(legsScreen),
         onOpenLegBuilder: () => _openScreen(legBuilderScreen),

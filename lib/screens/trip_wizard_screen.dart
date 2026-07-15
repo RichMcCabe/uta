@@ -39,7 +39,12 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
 
   GeocodedPlace? _origin;
   GeocodedPlace? _destination;
-  OsmRoutePlan? _routePreview;
+  List<OsmRoutePlan> _routeOptions = const [];
+  int _selectedRouteIndex = 0;
+  RoutePreference _routePreference = RoutePreference.fastest;
+
+  OsmRoutePlan? get _routePreview =>
+      _routeOptions.isEmpty ? null : _routeOptions[_selectedRouteIndex];
   TripType _tripType = TripType.roadTrip;
   bool _isCreating = false;
   bool _isPreviewing = false;
@@ -97,7 +102,8 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
                   recentPlaces: _recentPlaces,
                   onSelected: (place) => setState(() {
                     _origin = place;
-                    _routePreview = null;
+                    _routeOptions = const [];
+                    _selectedRouteIndex = 0;
                   }),
                 ),
                 const SizedBox(height: 8),
@@ -121,7 +127,8 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
                   recentPlaces: _recentPlaces,
                   onSelected: (place) => setState(() {
                     _destination = place;
-                    _routePreview = null;
+                    _routeOptions = const [];
+                    _selectedRouteIndex = 0;
                   }),
                 ),
                 const SizedBox(height: 14),
@@ -138,9 +145,34 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
               ],
             ),
           ),
-          if (_routePreview != null) ...[
+          const SizedBox(height: 12),
+          DropdownButtonFormField<RoutePreference>(
+            initialValue: _routePreference,
+            decoration: const InputDecoration(
+              labelText: 'Route preference',
+              prefixIcon: Icon(Icons.signpost_rounded),
+              helperText: 'Interstate preference ranks available OSRM alternatives; it cannot force roads that the provider does not return.',
+            ),
+            items: [
+              for (final value in RoutePreference.values)
+                DropdownMenuItem(value: value, child: Text(value.label)),
+            ],
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() {
+                _routePreference = value;
+                _routeOptions = const [];
+                _selectedRouteIndex = 0;
+              });
+            },
+          ),
+          if (_routeOptions.isNotEmpty) ...[
             const SizedBox(height: 14),
-            _RoutePreviewCard(plan: _routePreview!),
+            _RouteOptionsCard(
+              plans: _routeOptions,
+              selectedIndex: _selectedRouteIndex,
+              onSelected: (index) => setState(() => _selectedRouteIndex = index),
+            ),
           ],
           const SizedBox(height: 14),
           UtaCard(
@@ -203,7 +235,7 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
           ),
           const SizedBox(height: 10),
           const Text(
-            'Directions use OpenStreetMap and OSRM. Live deviation detection and automatic rerouting will be added to the GPS cockpit in Batch 3.',
+            'Directions use OpenStreetMap and OSRM. Alternative availability depends on the routing provider; live traffic and verified posted speed limits are not included.',
             textAlign: TextAlign.center,
             style: TextStyle(color: UtaColors.muted, fontSize: 12, height: 1.35),
           ),
@@ -248,7 +280,8 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
           longitude: location.longitude,
           typeLabel: 'Live GPS position',
         );
-        _routePreview = null;
+        _routeOptions = const [];
+        _selectedRouteIndex = 0;
       });
     } finally {
       if (mounted) setState(() => _isLocating = false);
@@ -261,8 +294,17 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
     if (origin == null || destination == null) return;
     setState(() => _isPreviewing = true);
     try {
-      final plan = await _routingService.buildDrivingRoute(origin: origin, destination: destination);
-      if (mounted) setState(() => _routePreview = plan);
+      final plans = await _routingService.buildDrivingRoutes(
+        origin: origin,
+        destination: destination,
+        preference: _routePreference,
+      );
+      if (mounted) {
+        setState(() {
+          _routeOptions = plans;
+          _selectedRouteIndex = 0;
+        });
+      }
     } on OsmRoutingException catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
     } finally {
@@ -297,6 +339,7 @@ class _TripWizardScreenState extends State<TripWizardScreen> {
         departureLabel: _departureController.text,
         targetArrivalLabel: _targetArrivalController.text,
         arrivalBufferMinutes: int.tryParse(_bufferController.text.trim()) ?? 30,
+        selectedPlan: _routePreview,
       );
       await _storageService.rememberPlaces([origin, destination]);
       if (mounted) widget.onTripCreated(trip);
@@ -482,42 +525,103 @@ class _PlaceSearchFieldState extends State<_PlaceSearchField> {
   }
 }
 
-class _RoutePreviewCard extends StatelessWidget {
-  const _RoutePreviewCard({required this.plan});
+class _RouteOptionsCard extends StatelessWidget {
+  const _RouteOptionsCard({
+    required this.plans,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final List<OsmRoutePlan> plans;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return UtaCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            plans.length == 1 ? 'Route ready' : 'Choose your route',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 10),
+          for (var index = 0; index < plans.length; index++) ...[
+            _RouteChoiceTile(
+              plan: plans[index],
+              index: index,
+              selected: index == selectedIndex,
+              onTap: () => onSelected(index),
+            ),
+            if (index != plans.length - 1) const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _RouteChoiceTile extends StatelessWidget {
+  const _RouteChoiceTile({
+    required this.plan,
+    required this.index,
+    required this.selected,
+    required this.onTap,
+  });
+
   final OsmRoutePlan plan;
+  final int index;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final hours = plan.duration.inHours;
     final minutes = plan.duration.inMinutes.remainder(60);
     final duration = hours == 0 ? '${minutes}m' : '${hours}h ${minutes}m';
-    return UtaCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            const Icon(Icons.route_rounded),
-            const SizedBox(width: 10),
-            Expanded(child: Text('Route ready', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800))),
-            const Icon(Icons.check_circle_rounded),
-          ]),
-          const SizedBox(height: 14),
-          Text('${plan.distanceMiles.toStringAsFixed(1)} miles  •  $duration  •  ${plan.segments.length} directions', style: const TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 12),
-          for (final segment in plan.segments.take(4))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Padding(padding: EdgeInsets.only(top: 2), child: Icon(Icons.turn_right_rounded, size: 18)),
-                const SizedBox(width: 8),
-                Expanded(child: Text(segment.instruction, maxLines: 2, overflow: TextOverflow.ellipsis)),
-                const SizedBox(width: 8),
-                Text('${segment.distanceMiles.toStringAsFixed(1)} mi', style: const TextStyle(color: UtaColors.muted, fontSize: 12)),
-              ]),
-            ),
-          if (plan.segments.length > 4)
-            Text('+ ${plan.segments.length - 4} more directions saved', style: const TextStyle(color: UtaColors.muted, fontSize: 12)),
-        ],
+    return Material(
+      color: selected
+          ? UtaColors.gold.withValues(alpha: 0.12)
+          : Colors.white.withValues(alpha: 0.03),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.radio_button_checked : Icons.radio_button_off,
+                color: selected ? UtaColors.gold : UtaColors.muted,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      index == 0 ? 'Recommended route' : 'Alternative ${index + 1}',
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${plan.distanceMiles.toStringAsFixed(1)} mi • $duration • ${plan.segments.length} steps',
+                      style: const TextStyle(color: UtaColors.muted),
+                    ),
+                    Text(
+                      'Estimated route pace ${plan.averageRouteMph.toStringAsFixed(0)} mph',
+                      style: const TextStyle(color: UtaColors.muted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -37,6 +37,7 @@ class GpsScreen extends StatefulWidget {
     required this.onOpenLocationSettings,
     required this.currentDriver,
     required this.onChangeDriver,
+    required this.onOpenDirections,
   });
 
   final Trip trip;
@@ -56,6 +57,7 @@ class GpsScreen extends StatefulWidget {
   final VoidCallback onOpenLocationSettings;
   final Profile? currentDriver;
   final VoidCallback onChangeDriver;
+  final VoidCallback onOpenDirections;
 
   @override
   State<GpsScreen> createState() => _GpsScreenState();
@@ -189,6 +191,14 @@ class _GpsScreenState extends State<GpsScreen> {
                     'UTA sees the device about ${snapshot.distanceFromRouteMiles.toStringAsFixed(1)} miles from the planned path. Rerouting begins after $_offRouteReadings of $_offRouteReadingsRequired reliable readings.',
               ),
             ],
+          ],
+          if (widget.trip.route.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: widget.onOpenDirections,
+              icon: const Icon(Icons.list_alt_rounded),
+              label: const Text('View all directions'),
+            ),
           ],
           const SizedBox(height: 12),
           GpsStatusCard(

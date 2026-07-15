@@ -19,8 +19,9 @@ class TripFactoryService {
     required String departureLabel,
     required String targetArrivalLabel,
     required int arrivalBufferMinutes,
+    OsmRoutePlan? selectedPlan,
   }) async {
-    final plan = await routingService.buildDrivingRoute(
+    final plan = selectedPlan ?? await routingService.buildDrivingRoute(
       origin: origin,
       destination: destination,
     );

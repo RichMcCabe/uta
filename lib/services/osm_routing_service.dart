@@ -25,6 +25,12 @@ class GeocodedPlace {
   }
 }
 
+enum RoutePreference { fastest, preferHighways }
+
+extension RoutePreferenceX on RoutePreference {
+  String get label => this == RoutePreference.fastest ? 'Fastest route' : 'Prefer interstates';
+}
+
 class OsmRoutePlan {
   const OsmRoutePlan({
     required this.origin,
@@ -32,6 +38,7 @@ class OsmRoutePlan {
     required this.distanceMiles,
     required this.duration,
     required this.segments,
+    this.alternativeIndex = 0,
   });
 
   final GeocodedPlace origin;
@@ -39,7 +46,13 @@ class OsmRoutePlan {
   final double distanceMiles;
   final Duration duration;
   final List<RouteSegment> segments;
+  final int alternativeIndex;
+
+  double get averageRouteMph => duration.inSeconds <= 0
+      ? 0
+      : distanceMiles / (duration.inSeconds / 3600);
 }
+
 
 class OsmRoutingException implements Exception {
   const OsmRoutingException(this.message);
@@ -102,6 +115,20 @@ class OsmRoutingService {
     required GeocodedPlace destination,
     String assignedDriverName = '',
   }) async {
+    final routes = await buildDrivingRoutes(
+      origin: origin,
+      destination: destination,
+      assignedDriverName: assignedDriverName,
+    );
+    return routes.first;
+  }
+
+  Future<List<OsmRoutePlan>> buildDrivingRoutes({
+    required GeocodedPlace origin,
+    required GeocodedPlace destination,
+    String assignedDriverName = '',
+    RoutePreference preference = RoutePreference.fastest,
+  }) async {
     final uri = Uri.https(
       'router.project-osrm.org',
       '/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}',
@@ -109,66 +136,60 @@ class OsmRoutingService {
         'overview': 'full',
         'geometries': 'geojson',
         'steps': 'true',
-        'alternatives': 'false',
+        'alternatives': 'true',
       },
     );
 
-    final json = await _getJsonMap(uri, timeout: const Duration(seconds: 15));
-    final routes = json['routes'];
-    if (routes is! List || routes.isEmpty || routes.first is! Map<String, dynamic>) {
+    final json = await _getJsonMap(uri, timeout: const Duration(seconds: 18));
+    final routesJson = json['routes'];
+    if (routesJson is! List || routesJson.isEmpty) {
       throw const OsmRoutingException('No drivable route was found between those locations.');
     }
 
-    final route = routes.first as Map<String, dynamic>;
-    final distanceMeters = (route['distance'] as num?)?.toDouble() ?? 0;
-    final durationSeconds = (route['duration'] as num?)?.round() ?? 0;
-    final segments = <RouteSegment>[];
-    final legs = route['legs'];
-
-    if (legs is List) {
-      for (final leg in legs.whereType<Map<String, dynamic>>()) {
-        final steps = leg['steps'];
-        if (steps is! List) continue;
-        for (final step in steps.whereType<Map<String, dynamic>>()) {
-          final stepDistanceMeters = (step['distance'] as num?)?.toDouble() ?? 0;
-          if (stepDistanceMeters < 10) continue;
-          final maneuver = step['maneuver'];
-          final maneuverMap = maneuver is Map<String, dynamic> ? maneuver : const <String, dynamic>{};
-          final location = maneuverMap['location'];
-          final roadName = (step['name'] as String?)?.trim() ?? '';
-          segments.add(RouteSegment(
-            id: 'osm-${segments.length + 1}',
-            instruction: _instructionFor(maneuverMap: maneuverMap, roadName: roadName),
-            distanceMiles: stepDistanceMeters / 1609.344,
-            speedLimitMph: _estimatedSpeedMph(
-              distanceMeters: stepDistanceMeters,
-              durationSeconds: (step['duration'] as num?)?.toDouble() ?? 0,
-            ),
-            assignedDriverName: assignedDriverName,
-            speedSource: SpeedSource.estimated,
-            note: 'OSRM maneuver. Route pace is estimated and is not a verified posted speed limit.',
-            checkpointLongitude: location is List && location.length >= 2 ? (location[0] as num?)?.toDouble() : null,
-            checkpointLatitude: location is List && location.length >= 2 ? (location[1] as num?)?.toDouble() : null,
-          ));
+    final plans = <OsmRoutePlan>[];
+    for (var routeIndex = 0; routeIndex < routesJson.length; routeIndex++) {
+      final raw = routesJson[routeIndex];
+      if (raw is! Map<String, dynamic>) continue;
+      final distanceMeters = (raw['distance'] as num?)?.toDouble() ?? 0;
+      final durationSeconds = (raw['duration'] as num?)?.round() ?? 0;
+      final segments = <RouteSegment>[];
+      final legs = raw['legs'];
+      if (legs is List) {
+        for (final leg in legs.whereType<Map<String, dynamic>>()) {
+          final steps = leg['steps'];
+          if (steps is! List) continue;
+          for (final step in steps.whereType<Map<String, dynamic>>()) {
+            final stepDistanceMeters = (step['distance'] as num?)?.toDouble() ?? 0;
+            if (stepDistanceMeters < 10) continue;
+            final maneuver = step['maneuver'];
+            final maneuverMap = maneuver is Map<String, dynamic>
+                ? maneuver
+                : const <String, dynamic>{};
+            final location = maneuverMap['location'];
+            final roadName = (step['name'] as String?)?.trim() ?? '';
+            segments.add(RouteSegment(
+              id: 'osm-$routeIndex-${segments.length + 1}',
+              instruction: _instructionFor(maneuverMap: maneuverMap, roadName: roadName),
+              distanceMiles: stepDistanceMeters / 1609.344,
+              speedLimitMph: _estimatedSpeedMph(
+                distanceMeters: stepDistanceMeters,
+                durationSeconds: (step['duration'] as num?)?.toDouble() ?? 0,
+              ),
+              assignedDriverName: assignedDriverName,
+              speedSource: SpeedSource.estimated,
+              note: 'Estimated route pace; not a verified posted speed limit.',
+              checkpointLongitude: location is List && location.length >= 2
+                  ? (location[0] as num?)?.toDouble()
+                  : null,
+              checkpointLatitude: location is List && location.length >= 2
+                  ? (location[1] as num?)?.toDouble()
+                  : null,
+            ));
+          }
         }
       }
-    }
-
-    if (segments.isEmpty) {
       segments.add(RouteSegment(
-        id: 'osm-destination',
-        instruction: 'Continue to ${destination.shortLabel}',
-        distanceMiles: distanceMeters / 1609.344,
-        speedLimitMph: _estimatedSpeedMph(distanceMeters: distanceMeters, durationSeconds: durationSeconds.toDouble()),
-        assignedDriverName: assignedDriverName,
-        speedSource: SpeedSource.estimated,
-        note: 'OSRM route pace is estimated and is not a verified posted speed limit.',
-        checkpointLatitude: destination.latitude,
-        checkpointLongitude: destination.longitude,
-      ));
-    } else {
-      segments.add(RouteSegment(
-        id: 'osm-arrival-${segments.length + 1}',
+        id: 'osm-arrival-$routeIndex-${segments.length + 1}',
         instruction: 'Arrive at ${destination.shortLabel}',
         distanceMiles: 0,
         speedLimitMph: 15,
@@ -178,15 +199,26 @@ class OsmRoutingService {
         checkpointLatitude: destination.latitude,
         checkpointLongitude: destination.longitude,
       ));
+      plans.add(OsmRoutePlan(
+        origin: origin,
+        destination: destination,
+        distanceMiles: distanceMeters / 1609.344,
+        duration: Duration(seconds: durationSeconds),
+        segments: segments,
+        alternativeIndex: routeIndex,
+      ));
     }
-
-    return OsmRoutePlan(
-      origin: origin,
-      destination: destination,
-      distanceMiles: distanceMeters / 1609.344,
-      duration: Duration(seconds: durationSeconds),
-      segments: segments,
-    );
+    if (plans.isEmpty) {
+      throw const OsmRoutingException('The route service returned no usable directions.');
+    }
+    plans.sort((a, b) {
+      if (preference == RoutePreference.preferHighways) {
+        final pace = b.averageRouteMph.compareTo(a.averageRouteMph);
+        if (pace != 0) return pace;
+      }
+      return a.duration.compareTo(b.duration);
+    });
+    return List.unmodifiable(plans.take(3));
   }
 
   Future<List<Map<String, dynamic>>> _getJsonList(Uri uri, {required Duration timeout}) async {
