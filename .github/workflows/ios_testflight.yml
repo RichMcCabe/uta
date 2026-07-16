@@ -1,0 +1,377 @@
+# UTA iOS TestFlight Build - GitHub Actions
+#
+# This workflow is intentionally separate from the existing Ad Hoc IPA workflow.
+#
+# Repository secrets required:
+#   APPLE_TEAM_ID
+#   BUNDLE_ID
+#   IOS_P12_B64
+#   P12_PASSWORD
+#   IOS_APPSTORE_MOBILEPROVISION_B64
+#   ASC_KEY_ID
+#   ASC_ISSUER_ID
+#   ASC_PRIVATE_KEY_B64
+#
+# Requirements outside GitHub:
+#   1. An App Store Connect app record already exists for BUNDLE_ID.
+#   2. IOS_P12_B64 contains an Apple Distribution certificate.
+#   3. IOS_APPSTORE_MOBILEPROVISION_B64 contains an App Store Connect
+#      distribution provisioning profile for BUNDLE_ID.
+#   4. ASC_PRIVATE_KEY_B64 contains the base64-encoded .p8 App Store Connect
+#      API private key associated with ASC_KEY_ID and ASC_ISSUER_ID.
+
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uta-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  build-and-upload-testflight:
+    runs-on: macos-14
+    timeout-minutes: 75
+
+    env:
+      BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      IOS_P12_B64: ${{ secrets.IOS_P12_B64 }}
+      IOS_APPSTORE_MOBILEPROVISION_B64: ${{ secrets.IOS_APPSTORE_MOBILEPROVISION_B64 }}
+      P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY_B64: ${{ secrets.ASC_PRIVATE_KEY_B64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Preflight - ensure required secrets exist
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          need=(
+            BUNDLE_ID
+            APPLE_TEAM_ID
+            IOS_P12_B64
+            IOS_APPSTORE_MOBILEPROVISION_B64
+            P12_PASSWORD
+            ASC_KEY_ID
+            ASC_ISSUER_ID
+            ASC_PRIVATE_KEY_B64
+          )
+
+          for key in "${need[@]}"; do
+            value="${!key:-}"
+            if [ -z "$value" ]; then
+              echo "::error::Missing required secret/env: $key"
+              exit 1
+            fi
+          done
+
+          echo "All required TestFlight secrets are present."
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Apple Team ID length: ${#APPLE_TEAM_ID}"
+          echo "Certificate base64 length: ${#IOS_P12_B64}"
+          echo "Provisioning profile base64 length: ${#IOS_APPSTORE_MOBILEPROVISION_B64}"
+          echo "App Store Connect key ID length: ${#ASC_KEY_ID}"
+          echo "App Store Connect issuer ID length: ${#ASC_ISSUER_ID}"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.6"
+          channel: stable
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Flutter analyze
+        run: flutter analyze
+
+      - name: Ensure iOS location permission text
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          plist="ios/Runner/Info.plist"
+          if [ ! -f "$plist" ]; then
+            echo "::error::Missing $plist"
+            exit 1
+          fi
+
+          if ! /usr/libexec/PlistBuddy \
+            -c "Print :NSLocationWhenInUseUsageDescription" \
+            "$plist" >/dev/null 2>&1; then
+            /usr/libexec/PlistBuddy \
+              -c "Add :NSLocationWhenInUseUsageDescription string UTA uses your location to show your live position, detect route checkpoints, and recalculate travel ETAs while you are using the app." \
+              "$plist"
+          fi
+
+      - name: Prepare Flutter iOS release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # TestFlight requires every uploaded build to have a unique build number.
+          # GitHub's run number provides a monotonically increasing value.
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --build-number="$GITHUB_RUN_NUMBER"
+
+      - name: Decode App Store signing assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf "%s" "$IOS_P12_B64" \
+            | tr -d '[:space:]' \
+            | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          printf "%s" "$IOS_APPSTORE_MOBILEPROVISION_B64" \
+            | tr -d '[:space:]' \
+            | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+
+          security cms \
+            -D \
+            -i "$RUNNER_TEMP/profile.mobileprovision" \
+            > "$RUNNER_TEMP/profile.plist"
+
+          profile_uuid="$(
+            /usr/libexec/PlistBuddy \
+              -c 'Print :UUID' \
+              "$RUNNER_TEMP/profile.plist"
+          )"
+
+          profile_name="$(
+            /usr/libexec/PlistBuddy \
+              -c 'Print :Name' \
+              "$RUNNER_TEMP/profile.plist"
+          )"
+
+          profile_app_id="$(
+            /usr/libexec/PlistBuddy \
+              -c 'Print :Entitlements:application-identifier' \
+              "$RUNNER_TEMP/profile.plist"
+          )"
+
+          profile_bundle_id="${profile_app_id#*.}"
+
+          echo "Provisioning profile: $profile_name"
+          echo "Provisioning UUID: $profile_uuid"
+          echo "Profile bundle ID: $profile_bundle_id"
+          echo "Expected bundle ID: $BUNDLE_ID"
+
+          if [ "$profile_bundle_id" != "$BUNDLE_ID" ]; then
+            echo "::error::Provisioning profile bundle ID '$profile_bundle_id' does not match '$BUNDLE_ID'."
+            exit 1
+          fi
+
+          if ! /usr/libexec/PlistBuddy \
+            -c 'Print :Entitlements:beta-reports-active' \
+            "$RUNNER_TEMP/profile.plist" >/dev/null 2>&1; then
+            echo "::error::The provisioning profile is not an App Store Connect/TestFlight profile. It does not contain beta-reports-active."
+            exit 1
+          fi
+
+          echo "PP_UUID=$profile_uuid" >> "$GITHUB_ENV"
+          echo "PP_NAME=$profile_name" >> "$GITHUB_ENV"
+
+      - name: Install signing certificate and provisioning profile
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          keychain="$RUNNER_TEMP/uta-build.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          security create-keychain \
+            -p "$keychain_password" \
+            "$keychain"
+
+          security set-keychain-settings \
+            -lut 21600 \
+            "$keychain"
+
+          security unlock-keychain \
+            -p "$keychain_password" \
+            "$keychain"
+
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$keychain" \
+            -P "$P12_PASSWORD" \
+            -A \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain"
+
+          security list-keychains \
+            -d user \
+            -s "$keychain" login.keychain-db
+
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+
+          cp "$RUNNER_TEMP/profile.mobileprovision" \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/$PP_UUID.mobileprovision"
+
+          security find-identity \
+            -v \
+            -p codesigning \
+            "$keychain"
+
+      - name: Archive iOS application
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"
+
+      - name: Create App Store Connect export options
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          bundle_id = os.environ["BUNDLE_ID"]
+          team_id = os.environ["APPLE_TEAM_ID"]
+          profile_name = os.environ["PP_NAME"]
+          runner_temp = Path(os.environ["RUNNER_TEMP"])
+
+          contents = f"""<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>export</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>{team_id}</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>{bundle_id}</key>
+              <string>{profile_name}</string>
+            </dict>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+            <key>stripSwiftSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          """
+
+          output = runner_temp / "ExportOptions.plist"
+          output.write_text(contents, encoding="utf-8")
+          print(f"Wrote {output}")
+          PY
+
+          plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
+
+      - name: Export App Store IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath "$RUNNER_TEMP/Runner.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+
+          ipa_path="$(find "$RUNNER_TEMP/export" -maxdepth 1 -name '*.ipa' -print -quit)"
+
+          if [ -z "$ipa_path" ] || [ ! -f "$ipa_path" ]; then
+            echo "::error::No IPA was produced."
+            exit 1
+          fi
+
+          echo "IPA_PATH=$ipa_path" >> "$GITHUB_ENV"
+          echo "Produced IPA: $ipa_path"
+          ls -lh "$ipa_path"
+
+      - name: Install App Store Connect API key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          key_directory="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$key_directory"
+
+          key_path="$key_directory/AuthKey_${ASC_KEY_ID}.p8"
+
+          printf "%s" "$ASC_PRIVATE_KEY_B64" \
+            | tr -d '[:space:]' \
+            | base64 --decode > "$key_path"
+
+          chmod 600 "$key_path"
+
+          if ! grep -q "BEGIN PRIVATE KEY" "$key_path"; then
+            echo "::error::Decoded App Store Connect private key is invalid."
+            exit 1
+          fi
+
+          echo "Installed App Store Connect API key."
+
+      - name: Validate IPA with App Store Connect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcrun altool \
+            --validate-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Upload IPA to TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          xcrun altool \
+            --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+          echo "Upload accepted by App Store Connect."
+          echo "Apple will now process the build before it appears in TestFlight."
+
+      - name: Upload IPA as GitHub artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uta-testflight-ipa-${{ github.run_number }}
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: warn
+          retention-days: 14
