@@ -38,6 +38,32 @@ import 'theme/uta_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ErrorWidget.builder = (details) => const Material(
+        color: UtaColors.night,
+        child: SafeArea(
+          child: Center(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      color: UtaColors.gold, size: 42),
+                  SizedBox(height: 14),
+                  Text('UTA could not open this screen',
+                      textAlign: TextAlign.center, style: UtaText.title),
+                  SizedBox(height: 8),
+                  Text(
+                    'Return to another tab and try again. Your saved trip and driving logs have not been deleted.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: UtaColors.muted, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
   final tripRepository = await TripRepository.load();
   runApp(UtaApp(tripRepository: tripRepository));
 }
@@ -313,6 +339,11 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
   }
 
   Future<void> _rerouteFromCurrentLocation(TrackedLocation location) async {
+    if (activeLeg.segments.isEmpty) {
+      throw const OsmRoutingException(
+        'Build a route for this leg before requesting a reroute.',
+      );
+    }
     final destinationSegment = activeLeg.segments.lastWhere(
       (segment) => segment.hasCheckpointLocation,
       orElse: () => activeLeg.segments.last,
@@ -443,7 +474,11 @@ class _UtaHomeShellState extends State<UtaHomeShell> {
               for (final driver in drivers)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(child: Text(driver.name.substring(0, 1).toUpperCase())),
+                  leading: CircleAvatar(
+                    child: Text(driver.name.trim().isEmpty
+                        ? '?'
+                        : driver.name.trim()[0].toUpperCase()),
+                  ),
                   title: Text(driver.name),
                   subtitle: Text(const DriverEligibilityService().eligibilitySummary(driver)),
                   trailing: activeDriverId == driver.id

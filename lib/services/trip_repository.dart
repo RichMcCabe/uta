@@ -19,7 +19,7 @@ class TripRepository {
   }) async {
     final repository = TripRepository._(storageService);
     final stored = await storageService.loadTrips();
-    if (stored == null) {
+    if (stored == null || stored.records.isEmpty) {
       repository._seed();
     } else {
       repository._records = stored.records;

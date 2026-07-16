@@ -55,7 +55,11 @@ class TripProgressService {
 
     final latestStatus = highestLoggedIndex < 0
         ? null
-        : statuses.firstWhere((status) => status.segmentId == trip.route[highestLoggedIndex].id);
+        : statuses.cast<RouteCheckpointStatus?>().firstWhere(
+              (status) =>
+                  status?.segmentId == trip.route[highestLoggedIndex].id,
+              orElse: () => null,
+            );
     final actualElapsedMinutes = latestStatus?.actualTime == null
         ? 0
         : latestStatus!.actualTime!.difference(departureTime).inMinutes;
